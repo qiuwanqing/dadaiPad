@@ -580,27 +580,34 @@ async function initModel(){
     loader.innerText = "准备加载 MediaPipe…";
 
     // ===== 动态 import（双 CDN 兜底）=====
-    const urls = [
-      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/vision_bundle.mjs",
-      "https://unpkg.com/@mediapipe/tasks-vision@0.10.0/vision_bundle.mjs"
-    ];
+const urls = [
+  // ✅ esm.sh：对 Safari 兼容性通常最好
+  "https://esm.sh/@mediapipe/tasks-vision@0.10.0",
+  // ✅ skypack：第二兜底
+  "https://cdn.skypack.dev/@mediapipe/tasks-vision@0.10.0"
+];
 
-    let mod = null;
+let mod = null;
+let lastErr = null;
 
-    for (const u of urls){
-      try{
-        loader.innerText = "下载 vision_bundle…";
-        mod = await import(u);
-        break;
-      }catch(e){
-        console.log("import failed:", u);
-      }
-    }
+for (const u of urls){
+  try{
+    loader.innerText = "下载 vision_bundle…\n" + u;
+    mod = await import(u);
+    break;
+  }catch(e){
+    lastErr = e;
+    console.log("import failed:", u, e);
+  }
+}
 
-    if (!mod) {
-      loader.innerText = "vision_bundle 加载失败";
-      return;
-    }
+if (!mod) {
+  loader.innerText =
+    "vision_bundle 加载失败\n" +
+    (lastErr?.message || String(lastErr) || "unknown error");
+  return;
+}
+
 
     InteractiveSegmenter = mod.InteractiveSegmenter;
     FilesetResolver = mod.FilesetResolver;
