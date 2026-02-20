@@ -378,8 +378,6 @@
   </div>
 
   <script type="module">
-  import { InteractiveSegmenter, FilesetResolver } from
-  "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/vision_bundle.mjs";
 
 
     const stage = document.getElementById("stage");
@@ -444,6 +442,10 @@
     let editMode = "stretch";
     let paintUndoStack = [];
     let objUndoStack = [];
+
+    let InteractiveSegmenter = null;
+    let FilesetResolver = null;
+
 
     let interactiveSegmenter = null;
     let isProcessing = false;
@@ -573,33 +575,64 @@
       }
     }
 
-    async function initModel(){
+async function initModel(){
+  try{
+    loader.innerText = "准备加载 MediaPipe…";
+
+    // ===== 动态 import（双 CDN 兜底）=====
+    const urls = [
+      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/vision_bundle.mjs",
+      "https://unpkg.com/@mediapipe/tasks-vision@0.10.0/vision_bundle.mjs"
+    ];
+
+    let mod = null;
+
+    for (const u of urls){
       try{
-        loader.innerText = "正在下载 WASM…";
-        const vision = await FilesetResolver.forVisionTasks(
-          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm"
-        );
-
-        async function create(delegate){
-          loader.innerText = `正在加载模型（${delegate}）…`;
-          return await InteractiveSegmenter.createFromOptions(vision, {
-            baseOptions: {
-              modelAssetPath:
-                "https://storage.googleapis.com/mediapipe-models/interactive_segmenter/magic_touch/float32/1/magic_touch.tflite",
-              delegate
-            },
-            outputCategoryMask: true,
-            outputConfidenceMasks: false
-          });
-        }
-
-        interactiveSegmenter = await create("CPU");
-        loader.innerText = "模型就绪（CPU），请开启相机";
-      } catch(err){
-        console.error(err);
-        loader.innerText = "模型加载失败: " + err.message;
+        loader.innerText = "下载 vision_bundle…";
+        mod = await import(u);
+        break;
+      }catch(e){
+        console.log("import failed:", u);
       }
     }
+
+    if (!mod) {
+      loader.innerText = "vision_bundle 加载失败";
+      return;
+    }
+
+    InteractiveSegmenter = mod.InteractiveSegmenter;
+    FilesetResolver = mod.FilesetResolver;
+
+    // ===== 加载 WASM =====
+    loader.innerText = "正在下载 WASM…";
+
+    const vision = await FilesetResolver.forVisionTasks(
+      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm"
+    );
+
+    // ===== 加载模型 =====
+    loader.innerText = "正在加载模型（CPU）…";
+
+    interactiveSegmenter = await InteractiveSegmenter.createFromOptions(vision, {
+      baseOptions: {
+        modelAssetPath:
+          "https://storage.googleapis.com/mediapipe-models/interactive_segmenter/magic_touch/float32/1/magic_touch.tflite",
+        delegate: "CPU"
+      },
+      outputCategoryMask: true,
+      outputConfidenceMasks: false
+    });
+
+    loader.innerText = "模型就绪（CPU），请开启相机";
+
+  }catch(err){
+    console.error(err);
+    loader.innerText = "模型加载失败:\n" + (err?.message || String(err));
+  }
+}
+
 
     const btnModeMP   = document.getElementById("btnModeMP");
     const btnModeRect = document.getElementById("btnModeRect");
