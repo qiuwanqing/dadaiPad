@@ -1,0 +1,2011 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+  <title>MP+RE+DR-3addshakeposition/mac</title>
+
+  <script src="https://unpkg.com/vconsole@latest/dist/vconsole.min.js"></script>
+  <script>var vConsole = new VConsole();</script>
+
+  <style>
+    :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
+    body { margin:0; background:#0b0c10; color:#e8e8e8; overflow:hidden; }
+    button { font: inherit; }
+
+    .topbar{
+      position: absolute; top:0; left:0; right:0;
+      z-index: 40;
+      display:flex; flex-wrap:wrap; gap:8px; align-items:center; justify-content:center;
+      padding:10px 10px calc(10px + env(safe-area-inset-top));
+      background: linear-gradient(to bottom, rgba(0,0,0,.86), rgba(0,0,0,0));
+      pointer-events:none;
+    }
+    .topbar * { pointer-events:auto; }
+
+    .topbar button{
+      padding:8px 10px;
+      border-radius:999px;
+      border:1px solid rgba(255,255,255,.18);
+      background: rgba(255,255,255,.08);
+      color:#fff;
+      backdrop-filter: blur(10px);
+      -webkit-tap-highlight-color: transparent;
+      cursor:pointer;
+    }
+
+    /* 让 editbar 里的按钮视觉和 topbar 一致 */
+    #editbar button{
+    padding:8px 10px;
+    border-radius:999px;
+    border:1px solid rgba(255,255,255,.18);
+    background: rgba(255,255,255,.08);
+    color:#fff;
+    backdrop-filter: blur(10px);
+    -webkit-tap-highlight-color: transparent;
+    cursor:pointer;
+    }
+    #editbar button:active{ transform: translateY(0.5px); }
+    #editbar button.primary{ border-color: rgba(160,210,255,.60); }
+    #editbar button.danger{ border-color: rgba(255,120,120,.55); }
+    #editbar button.active{
+    border-color: rgba(255,255,255,.75);
+    background: rgba(255,255,255,.16);
+    }
+
+    .topbar button.active{
+      border-color: rgba(255,255,255,.75);
+      background: rgba(255,255,255,.16);
+    }
+    .topbar .danger{ border-color: rgba(255,120,120,.55); }
+    .topbar .primary{ border-color: rgba(160,210,255,.60); }
+    .topbar button.disabled{
+      opacity:.45;
+      pointer-events:none;
+      filter:saturate(.7);
+    }
+
+    #stage{
+      position: relative;
+      width:100vw;
+      height:100vh;
+      overflow:hidden;
+      touch-action:none;
+      background:#000;
+      user-select:none;
+    }
+    #video{
+      position:absolute; inset:0;
+      width:100%; height:100%;
+      object-fit: cover;
+      transform-origin:center;
+      z-index:1;
+    }
+
+    #loader{
+      position:absolute; left:50%; top:50%;
+      transform: translate(-50%, -50%);
+      z-index: 6;
+      color:#aaa;
+      font-size: 14px;
+      text-align:center;
+      line-height:1.35;
+      pointer-events:none;
+      padding:8px 10px;
+      border-radius:12px;
+      background: rgba(0,0,0,.35);
+      border: 1px solid rgba(255,255,255,.12);
+      backdrop-filter: blur(10px);
+    }
+    #hint{
+      position:absolute;
+      left:50%;
+      bottom: calc(86px + env(safe-area-inset-bottom));
+      transform: translateX(-50%);
+      z-index: 35;
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      color: rgba(255,255,255,0.88);
+      background: rgba(0,0,0,0.38);
+      border: 1px solid rgba(255,255,255,0.16);
+      backdrop-filter: blur(10px);
+      pointer-events:none;
+      opacity:0;
+      transition: opacity .18s;
+      max-width: 86vw;
+      text-align:center;
+      line-height:1.25;
+    }
+    #hint.show{ opacity:1; }
+
+    #roiBox{
+      position:absolute;
+      border:1px solid rgba(255,255,255,.85);
+      background: rgba(255,255,255,.08);
+      border-radius:0px;
+      pointer-events:none;
+      display:none;
+      z-index: 9;
+    }
+
+    #roiGrid{
+      position:absolute;
+      inset:0;            /* 填满 roiBox */
+      pointer-events:none;
+      display:none;       /* 默认不显示 */
+      /* 网格线：用 CSS 变量控制间距 */
+      background:
+        repeating-linear-gradient(
+          to right,
+          rgba(255,255,255,0.55) 0,
+          rgba(255,255,255,0.55) 1px,
+          transparent 1px,
+          transparent var(--cellW, 40px)
+        ),
+        repeating-linear-gradient(
+          to bottom,
+          rgba(255,255,255,0.55) 0,
+          rgba(255,255,255,0.55) 1px,
+          transparent 1px,
+          transparent var(--cellH, 40px)
+        );
+      mix-blend-mode: screen; /* 可选：更亮一点 */
+    }
+
+
+    #drawLayer{
+      position:absolute; inset:0;
+      z-index: 8;
+      pointer-events:none;
+    }
+
+    .sticker{
+      position:absolute;
+      left:0; top:0;
+      z-index: 10;
+      border-radius:0px;/* ✅ 冷冻窗*/
+      border:1px solid rgba(255,255,255,0);  /* ✅ 冷冻窗*/
+      box-shadow: 0 10px 30px rgba(0,0,0,0);/* ✅ 冷冻窗*/
+      filter: drop-shadow(0 0 10px rgba(255,255,255,0));/* ✅ 冷冻窗*/
+      transform-origin: center;
+      touch-action:none;
+      cursor: grab;
+      animation: popIn .28s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    }
+    .sticker:active{ cursor:grabbing; }
+    .sticker.selected{
+      border-color: rgba(255,255,255,0);
+      box-shadow: 0 10px 30px rgba(0,0,0,.55);
+      outline: 0px solid rgba(255,255,255,0.95);
+      outline-offset: 3px;
+    }
+    @keyframes popIn{
+      from { transform: scale(.88); opacity:0; }
+      to   { transform: scale(1); opacity:1; }
+    }
+
+    #editbar{
+      position:absolute; left:0; right:0; bottom:0;
+      z-index: 50;
+      padding: 10px 10px calc(10px + env(safe-area-inset-bottom));
+      display:none;
+      gap:8px;
+      flex-wrap:wrap;
+      align-items:center;
+      justify-content:center;
+      background: linear-gradient(to top, rgba(0,0,0,.92), rgba(0,0,0,0));
+      pointer-events:none;
+    }
+    #editbar *{ pointer-events:auto; }
+
+    #gridbar{
+      position: fixed;
+      left:0; 
+      right:0; 
+      bottom:0;
+      z-index: 9999;
+      padding: 10px 10px calc(10px + env(safe-area-inset-bottom));
+      display:none;
+      gap:8px;
+      flex-wrap:wrap;
+      align-items:center;
+      justify-content:center;
+      background: linear-gradient(to top, rgba(0,0,0,.92), rgba(0,0,0,0));
+      pointer-events:none;
+    }
+#gridbar *{ pointer-events:auto; }
+
+#gridbar button{
+  padding:8px 10px;
+  border-radius:999px;
+  border:1px solid rgba(255,255,255,.18);
+  background: rgba(255,255,255,.08);
+  color:#fff;
+  backdrop-filter: blur(10px);
+  cursor:pointer;
+}
+#gridbar button.primary{ border-color: rgba(160,210,255,.60); }
+
+
+
+    .seg{
+      display:flex; gap:8px; flex-wrap:wrap; justify-content:center; align-items:center;
+      width:100%;
+    }
+    .pill{
+      display:flex; align-items:center; gap:8px;
+      padding: 8px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(255,255,255,0.25);
+      background: rgba(255,255,255,0.10);
+      backdrop-filter: blur(10px);
+      font-size: 12px;
+      color: #ddd;
+    }
+    input[type="range"]{ width:140px; }
+
+    #libPanel{
+      position:absolute;
+      right:12px; top:62px;
+      z-index: 60;
+      width: 190px;
+      max-height: 62vh;
+      overflow:auto;
+      padding:10px;
+      border:1px solid rgba(255,255,255,.12);
+      background: rgba(20,20,24,.78);
+      backdrop-filter: blur(10px);
+      border-radius: 14px;
+      display:none;
+    }
+    #libPanel h3{
+      margin:0 0 8px 0;
+      font-size: 12px;
+      opacity:.85;
+      font-weight:600;
+      letter-spacing:.02em;
+    }
+    .thumb{
+      width:100%;
+      border-radius:10px;
+      border:1px solid rgba(255,255,255,.12);
+      margin-bottom:8px;
+      display:block;
+      cursor:pointer;
+      background:#000;
+    }
+    .row{ display:flex; gap:8px; margin-bottom:8px; }
+    .row button{
+      flex:1; border-radius:10px; padding:6px 8px;
+      border:1px solid rgba(255,255,255,.18);
+      background: rgba(255,255,255,.08);
+      color:#fff;
+    }
+    .small{ font-size:12px; opacity:.8; }
+  </style>
+</head>
+
+<body>
+  <div class="topbar">
+    <button id="btnStart" class="primary">Start Camera</button>
+    <button id="btnFlip">Flip</button>
+
+    <button id="btnModeMP" class="active">MP</button>
+    <button id="btnModeRect">RECT</button>
+    <button id="btnModeDraw">DRAW</button>
+    <button id="btnModeGrid">GRID</button>
+
+    <button id="btnVidBW">V-B&W</button>
+    <button id="btnVidBlur">V-Blur</button>
+    <input id="vidBlur" type="range" min="0" max="18" value="0" style="width:110px;">
+
+
+    <button id="btnSave" class="disabled">Save</button>
+    <button id="btnEdit" class="primary disabled">Edit</button>
+    <button id="btnLibrary">Library</button>
+
+    <button id="btnUndoObj">Undo Add</button>
+    <button id="btnClearAll" class="danger">Clear</button>
+    <button id="btnMotion" class="primary">Enable Motion</button>
+
+    <button id="btnGravity" class="primary">Gravity OFF</button>
+
+
+
+  </div>
+
+  <div id="stage">
+    <video id="video" playsinline muted autoplay></video>
+    <canvas id="drawLayer"></canvas>
+    <div id="roiBox">
+      <div id="roiGrid"></div>
+    </div>
+
+    <div id="loader">加载模型中…<br/>（加载完后点 Start Camera）</div>
+    <div id="hint"></div>
+
+    <div id="gridbar">
+  <div class="seg">
+    <span class="pill">
+      rows
+      <input id="gridRows" type="range" min="1" max="12" value="3" />
+      <span id="gridRowsVal">3</span>
+    </span>
+
+    <span class="pill">
+      cols
+      <input id="gridCols" type="range" min="1" max="12" value="4" />
+      <span id="gridColsVal">4</span>
+    </span>
+
+    <button id="btnGridCancel">cancel</button>
+    <button id="btnGridDone" class="primary">done</button>
+  </div>
+</div>
+
+    
+    <div id="libPanel">
+      <div class="row">
+        <button id="btnLibClose">Close</button>
+        <button id="btnLibClear">Clear</button>
+      </div>
+      <h3>LIBRARY</h3>
+      <div id="libList" class="small"></div>
+    </div>
+  </div>
+
+  <div id="editbar">
+    <div class="seg">
+      <span class="pill">distort</span>
+
+      <span class="pill">
+        radius
+        <input id="radius" type="range" min="10" max="220" value="120">
+      </span>
+
+      <span class="pill">
+        strength
+        <input id="strength" type="range" min="-100" max="100" value="85">
+      </span>
+
+    <button id="btnUndoPaint">undo</button>
+    <button id="btnFxBlur" class="primary">Blur</button>
+    <button id="btnFxBW" class="primary">B&W</button>
+    <button id="btnFxNoise" class="primary">Noise</button>
+    <button id="btnDone" class="danger">done</button>
+    </div>
+  </div>
+
+  <script type="module">
+  import { InteractiveSegmenter, FilesetResolver } from
+  "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/vision_bundle.mjs";
+
+
+    const stage = document.getElementById("stage");
+    const video = document.getElementById("video");
+    const roiBox = document.getElementById("roiBox");
+    const drawLayer = document.getElementById("drawLayer");
+    const drawCtx = drawLayer.getContext("2d");
+    const loader = document.getElementById("loader");
+    const hint = document.getElementById("hint");
+
+    const editbar = document.getElementById("editbar");
+    const radiusEl = document.getElementById("radius");
+    const strengthEl = document.getElementById("strength");
+
+    const libPanel = document.getElementById("libPanel");
+    const libList  = document.getElementById("libList");
+
+    const btnSave = document.getElementById("btnSave");
+    const btnEdit = document.getElementById("btnEdit");
+
+    const btnModeGrid = document.getElementById("btnModeGrid");
+
+    const gridbar = document.getElementById("gridbar");
+    const gridRowsEl = document.getElementById("gridRows");
+    const gridColsEl = document.getElementById("gridCols");
+    const gridRowsVal = document.getElementById("gridRowsVal");
+    const gridColsVal = document.getElementById("gridColsVal");
+    
+    const roiGrid = document.getElementById("roiGrid");
+
+    let pendingGridRect = null;
+
+    // grid groups
+    let gridGroups = [];
+    let gridGroupSeq = 1;
+
+
+    const showHint = (text, ms=900) => {
+      hint.textContent = text;
+      hint.classList.add("show");
+      clearTimeout(showHint._t);
+      showHint._t = setTimeout(() => hint.classList.remove("show"), ms);
+    };
+
+    function setActionEnabled(enabled){
+      btnSave.classList.toggle("disabled", !enabled);
+      btnEdit.classList.toggle("disabled", !enabled);
+    }
+
+    let stream = null;
+    let facingMode = "environment";
+
+    let captureMode = "mp";
+    let pointerDown = false;
+    let startPt = null;
+    let roi = null;
+    let path = [];
+
+    let stickers = [];
+    let selected = null;
+
+    let editMode = "stretch";
+    let paintUndoStack = [];
+    let objUndoStack = [];
+
+    let interactiveSegmenter = null;
+    let isProcessing = false;
+
+    // ===== 全局视频滤镜状态 =====
+    let videoFx = {
+    bw: false,
+    blur: false,
+    blurPx: 0
+    };
+
+    // ===== 全局视频滤镜：真正的全局函数（按钮才能调用到）=====
+    function applyVideoFilter(){
+    const parts = [];
+
+    // 黑白
+    if (videoFx.bw) parts.push("grayscale(1)");
+
+    // 模糊
+    if (videoFx.blur && videoFx.blurPx > 0) {
+        parts.push(`blur(${videoFx.blurPx}px)`);
+    }
+
+    // 应用到 video 上（CSS filter）
+    video.style.filter = parts.length ? parts.join(" ") : "none";
+
+    // 按钮状态同步（让按钮亮/暗）
+    const bwBtn = document.getElementById("btnVidBW");
+    const blurBtn = document.getElementById("btnVidBlur");
+    bwBtn?.classList.toggle("active", videoFx.bw);
+    blurBtn?.classList.toggle("active", videoFx.blur);
+
+    // 滑块同步
+    const slider = document.getElementById("vidBlur");
+    if (slider) slider.value = String(videoFx.blurPx || 0);
+    }
+
+    let gesture = {
+      active:false,
+      startDist:0,
+      startAng:0,
+      baseScale:1,
+      baseRot:0
+    };
+
+    const LIB_KEY = "capture_library_v2";
+
+    function resizeDrawLayer(){
+      const r = stage.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      drawLayer.width  = Math.round(r.width * dpr);
+      drawLayer.height = Math.round(r.height * dpr);
+      drawLayer.style.width  = r.width + "px";
+      drawLayer.style.height = r.height + "px";
+      drawCtx.setTransform(dpr,0,0,dpr,0,0);
+    }
+    window.addEventListener("resize", resizeDrawLayer);
+
+    function clearPathPreview(){
+      drawCtx.clearRect(0,0, drawLayer.width, drawLayer.height);
+    }
+    function drawPathPreview(points){
+      drawCtx.clearRect(0,0, drawLayer.width, drawLayer.height);
+      if (!points || points.length < 2) return;
+      drawCtx.beginPath();
+      drawCtx.moveTo(points[0].x, points[0].y);
+      for (const p of points) drawCtx.lineTo(p.x, p.y);
+      drawCtx.lineWidth = 2;
+      drawCtx.strokeStyle = "rgba(255,255,255,.65)";
+      drawCtx.lineCap = "round";
+      drawCtx.lineJoin = "round";
+      drawCtx.stroke();
+    }
+
+    function clamp(v,a,b){ return Math.max(a, Math.min(b,v)); }
+
+    function localPointFromClient(clientX, clientY){
+      const r = stage.getBoundingClientRect();
+      return { x: clientX - r.left, y: clientY - r.top, W: r.width, H: r.height };
+    }
+
+    function getClientXY(e){
+      if (e.changedTouches && e.changedTouches.length) {
+        return { cx: e.changedTouches[0].clientX, cy: e.changedTouches[0].clientY };
+      }
+      if (e.touches && e.touches.length) {
+        return { cx: e.touches[0].clientX, cy: e.touches[0].clientY };
+      }
+      return { cx: e.clientX, cy: e.clientY };
+    }
+
+    async function startCamera(){
+      if (!navigator.mediaDevices?.getUserMedia) {
+        alert("当前环境不支持摄像头。");
+        return;
+      }
+      if (location.protocol !== "https:" && location.hostname !== "localhost" && location.hostname !== "127.0.0.1") {
+        showHint("iOS 相机需要 HTTPS", 1400);
+      }
+
+      if (stream) stream.getTracks().forEach(t => t.stop());
+
+      try{
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode, width:{ideal:720}, height:{ideal:1280} },
+          audio: false
+        });
+
+        video.srcObject = stream;
+        await video.play();
+
+        await new Promise(res=>{
+        if (video.videoWidth) return res();
+        video.addEventListener("loadedmetadata", res, { once:true });
+        });
+
+        video.style.transform = (facingMode === "user") ? "scaleX(-1)" : "none";
+        applyVideoFilter();
+
+        loader.style.display = "none";
+        resizeDrawLayer();
+
+        showHint("MP：点画面=抠图；贴纸：点=选中，拖=移动；双指=旋转缩放", 1800);
+      } catch(e){
+        console.error(e);
+        alert("无法打开相机：请检查权限；iOS 通常需要 https。");
+      }
+    }
+
+    async function initModel(){
+      try{
+        loader.innerText = "正在下载 WASM…";
+        const vision = await FilesetResolver.forVisionTasks(
+          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm"
+        );
+
+        async function create(delegate){
+          loader.innerText = `正在加载模型（${delegate}）…`;
+          return await InteractiveSegmenter.createFromOptions(vision, {
+            baseOptions: {
+              modelAssetPath:
+                "https://storage.googleapis.com/mediapipe-models/interactive_segmenter/magic_touch/float32/1/magic_touch.tflite",
+              delegate
+            },
+            outputCategoryMask: true,
+            outputConfidenceMasks: false
+          });
+        }
+
+        interactiveSegmenter = await create("CPU");
+        loader.innerText = "模型就绪（CPU），请开启相机";
+      } catch(err){
+        console.error(err);
+        loader.innerText = "模型加载失败: " + err.message;
+      }
+    }
+
+    const btnModeMP   = document.getElementById("btnModeMP");
+    const btnModeRect = document.getElementById("btnModeRect");
+    const btnModeDraw = document.getElementById("btnModeDraw");
+
+    function setCaptureMode(m){
+      captureMode = m;
+      btnModeMP.classList.toggle("active", m==="mp");
+      btnModeRect.classList.toggle("active", m==="rect");
+      btnModeDraw.classList.toggle("active", m==="draw");
+      btnModeGrid?.classList.toggle("active", m==="grid");
+
+      if (m === "mp") showHint("MP：点一下物体自动抠图", 900);
+      if (m === "rect") showHint("RECT：按住拖拽画框，松手截取", 900);
+      if (m === "draw") showHint("DRAW：按住手写路径，松手截取", 900);
+      if (m === "grid") showHint("GRID：拖拽画大框 → 设行列 → done 切成碎片", 1200);
+    }
+    btnModeMP.onclick = () => setCaptureMode("mp");
+    btnModeRect.onclick = () => setCaptureMode("rect");
+    btnModeDraw.onclick = () => setCaptureMode("draw");
+    btnModeGrid.onclick = () => setCaptureMode("grid");
+
+    function deselect(){
+      if (selected?.el) selected.el.classList.remove("selected");
+      selected = null;
+      editbar.style.display = "none";
+      paintUndoStack = [];
+      setActionEnabled(false);
+    }
+
+    function selectSticker(st){
+      if (selected && selected !== st) selected.el.classList.remove("selected");
+      selected = st;
+      st.el.classList.add("selected");
+      paintUndoStack = [];
+      setActionEnabled(true);
+      showHint("selected", 1200);
+    }
+
+    function applyTransform(st){
+      st.el.style.transform = `translateZ(0) rotate(${st.rot}rad) scale(${st.scale})`;
+    }
+
+    function applyStickerCssFilter(st){
+    const parts = [];
+    if (st.blurPx > 0) parts.push(`blur(${st.blurPx}px)`);
+    st.el.style.filter = parts.length ? parts.join(" ") : "none";
+    }
+
+    // iOS 稳定：先把 video 当前帧画到 canvas，再送进 MediaPipe
+    const mpFrameCanvas = document.createElement("canvas");
+    const mpFrameCtx = mpFrameCanvas.getContext("2d", { willReadFrequently: true });
+
+    function getVideoFrameCanvas(){
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
+    if (!vw || !vh) return null;
+
+    if (mpFrameCanvas.width !== vw || mpFrameCanvas.height !== vh){
+        mpFrameCanvas.width = vw;
+        mpFrameCanvas.height = vh;
+    }
+    mpFrameCtx.drawImage(video, 0, 0, vw, vh);
+    return mpFrameCanvas;
+    }
+
+
+    function showROI(rect){
+      roiBox.style.display = "block";
+      roiBox.style.left = rect.x + "px";
+      roiBox.style.top  = rect.y + "px";
+      roiBox.style.width  = rect.w + "px";
+      roiBox.style.height = rect.h + "px";
+    }
+    function hideROI(){ roiBox.style.display = "none"; }
+
+    function updateRoiGridPreview(){
+      if (!roiGrid || !pendingGridRect) return;
+
+      const rows = parseInt(gridRowsEl.value, 10) || 1;
+      const cols = parseInt(gridColsEl.value, 10) || 1;
+
+      const cellW = pendingGridRect.w / cols;
+      const cellH = pendingGridRect.h / rows;
+
+      roiGrid.style.setProperty("--cellW", cellW + "px");
+      roiGrid.style.setProperty("--cellH", cellH + "px");
+    }
+
+    function showRoiGridPreview(on){
+      if (!roiGrid) return;
+      roiGrid.style.display = on ? "block" : "none";
+    }
+
+
+    function cssRectToVideoCrop(cssRect){
+      const vw = video.videoWidth, vh = video.videoHeight;
+      if (!vw || !vh) return null;
+
+      const sw = stage.clientWidth, sh = stage.clientHeight;
+      const videoAspect = vw / vh;
+      const stageAspect = sw / sh;
+
+      let drawW, drawH, offsetX, offsetY;
+      if (stageAspect > videoAspect) {
+        drawW = sw;
+        drawH = sw / videoAspect;
+        offsetX = 0;
+        offsetY = (sh - drawH) / 2;
+      } else {
+        drawH = sh;
+        drawW = sh * videoAspect;
+        offsetY = 0;
+        offsetX = (sw - drawW) / 2;
+      }
+
+      const isMirrored = (facingMode === "user");
+
+      let nx = (cssRect.x - offsetX) / drawW;
+      const ny = (cssRect.y - offsetY) / drawH;
+      const nw = cssRect.w / drawW;
+      const nh = cssRect.h / drawH;
+
+      if (isMirrored) nx = 1 - nx - nw;
+
+      let sx = Math.round(nx * vw);
+      let sy = Math.round(ny * vh);
+      let swp = Math.round(nw * vw);
+      let shp = Math.round(nh * vh);
+
+      sx = clamp(sx, 0, vw-1);
+      sy = clamp(sy, 0, vh-1);
+      swp = clamp(swp, 1, vw - sx);
+      shp = clamp(shp, 1, vh - sy);
+
+      return { sx, sy, sw: swp, sh: shp };
+    }
+
+    function addStickerFromCanvas(srcCanvas, cssRect){
+      const dpr = Math.max(1, Math.min(window.devicePixelRatio || 1, 3));
+
+      const stCanvas = document.createElement("canvas");
+      stCanvas.className = "sticker";
+      stCanvas.style.left = cssRect.x + "px";
+      stCanvas.style.top  = cssRect.y + "px";
+      stCanvas.style.width  = cssRect.w + "px";
+      stCanvas.style.height = cssRect.h + "px";
+
+      stCanvas.width  = Math.round(cssRect.w * dpr);
+      stCanvas.height = Math.round(cssRect.h * dpr);
+
+      const ctx = stCanvas.getContext("2d");
+      ctx.imageSmoothingEnabled = true;
+      ctx.drawImage(srcCanvas, 0,0, stCanvas.width, stCanvas.height);
+
+      stage.appendChild(stCanvas);
+
+      const st = { el: stCanvas, x: cssRect.x, y: cssRect.y, w: cssRect.w, h: cssRect.h, scale: 1, rot: 0,
+      blurPx: 0 ,
+      vx: 0, vy: 0, av: 0, _physLock: false
+
+      };
+      stickers.push(st);
+      objUndoStack.push(st);
+
+      applyStickerCssFilter(st);   // ⭐⭐⭐ 关键
+
+      attachStickerInteractions(st);
+      selectSticker(st);
+    }
+
+    function alphaHitTest(canvasEl, clientX, clientY){
+      const r = canvasEl.getBoundingClientRect();
+      const d = canvasEl.width / r.width;
+      const px = (clientX - r.left) * d;
+      const py = (clientY - r.top) * d;
+      if (px < 0 || py < 0 || px >= canvasEl.width || py >= canvasEl.height) return false;
+      const a = canvasEl.getContext("2d").getImageData(px|0, py|0, 1, 1).data[3];
+      return a !== 0;
+    }
+
+    function getLocalPointOnCanvas(canvasEl, clientX, clientY){
+      const r = canvasEl.getBoundingClientRect();
+      if (clientX < r.left || clientX > r.right || clientY < r.top || clientY > r.bottom) return null;
+      const x = (clientX - r.left) / r.width * canvasEl.width;
+      const y = (clientY - r.top) / r.height * canvasEl.height;
+      return { x, y };
+    }
+
+    function attachStickerInteractions(st){
+      const el = st.el;
+
+      let isDown = false;
+      let startX=0, startY=0;
+      let baseLeft=0, baseTop=0;
+      let moved = false;
+      const DRAG_THRESHOLD = 6;
+      let lastLocal = null;
+
+      el.addEventListener("pointerdown", (e)=>{
+        if (!alphaHitTest(el, e.clientX, e.clientY)) return;
+
+        e.preventDefault();
+        e.stopPropagation();
+
+        isDown = true;
+        moved = false;
+
+        startX = e.clientX;
+        startY = e.clientY;
+        baseLeft = st.x;
+        baseTop  = st.y;
+
+        selectSticker(st);
+
+        // ✅ gravity/physics: dragging locks physics
+        st._physLock = true;
+        st.vx = st.vy = st.av = 0;
+
+        if (editbar.style.display === "flex" && editMode === "stretch") {
+          lastLocal = getLocalPointOnCanvas(el, e.clientX, e.clientY);
+
+          const ctx = el.getContext("2d");
+          const snap = ctx.getImageData(0,0, el.width, el.height);
+          paintUndoStack.push(snap);
+          if (paintUndoStack.length > 14) paintUndoStack.shift();
+        } else {
+          lastLocal = null;
+        }
+
+        el.setPointerCapture(e.pointerId);
+      }, { passive:false });
+
+      el.addEventListener("pointermove", (e)=>{
+        if (!isDown || selected !== st) return;
+
+        const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
+        const dist = Math.hypot(dx, dy);
+
+        if (editbar.style.display !== "flex") {
+          if (dist > DRAG_THRESHOLD) moved = true;
+          if (!moved) return;
+
+          st.x = baseLeft + dx;
+          st.y = baseTop  + dy;
+          el.style.left = st.x + "px";
+          el.style.top  = st.y + "px";
+          e.preventDefault();
+          return;
+        }
+
+        if (editMode !== "stretch") return;
+        const local = getLocalPointOnCanvas(el, e.clientX, e.clientY);
+        if (!local) return;
+
+        const radius = parseInt(radiusEl.value, 10);
+        const base = parseInt(strengthEl.value, 10) / 100;
+        const strength = Math.max(-1.25, Math.min(1.25, base * 1.35));
+
+        if (lastLocal){
+          const vx = local.x - lastLocal.x;
+          const vy = local.y - lastLocal.y;
+          applySmear(el, local.x, local.y, radius, vx, vy, strength);
+        }
+        lastLocal = local;
+
+        e.preventDefault();
+      }, { passive:false });
+
+      const end = (e)=>{
+        isDown = false;
+        lastLocal = null;
+        moved = false;
+        try{ el.releasePointerCapture(e.pointerId); }catch{}
+        st._physLock = false; // ✅ release lock
+      };
+      el.addEventListener("pointerup", end);
+      el.addEventListener("pointercancel", end);
+    }
+
+    function applySmear(canvas, cx, cy, radius, vx, vy, strength){
+      const ctx = canvas.getContext("2d");
+      const w = canvas.width, h = canvas.height;
+
+      const src = ctx.getImageData(0,0,w,h);
+      const dst = ctx.createImageData(w,h);
+      dst.data.set(src.data);
+
+      const r2 = radius * radius;
+
+      const x0 = Math.max(0, Math.floor(cx - radius));
+      const x1 = Math.min(w - 1, Math.ceil(cx + radius));
+      const y0 = Math.max(0, Math.floor(cy - radius));
+      const y1 = Math.min(h - 1, Math.ceil(cy + radius));
+
+      const len = Math.hypot(vx, vy) || 1;
+      const ux = vx / len;
+      const uy = vy / len;
+
+      const push = Math.min(36, len) * (0.9 + Math.abs(strength) * 1.3) * Math.sign(strength || 1);
+
+      for (let y = y0; y <= y1; y++){
+        for (let x = x0; x <= x1; x++){
+          const dx = x - cx, dy = y - cy;
+          const d2 = dx*dx + dy*dy;
+          if (d2 > r2) continue;
+
+          const d = Math.sqrt(d2);
+          const t = 1 - d / radius;
+          const falloff = t * t;
+
+          const sx = x - ux * push * falloff;
+          const sy = y - uy * push * falloff;
+
+          const ix = Math.max(0, Math.min(w - 1, Math.round(sx)));
+          const iy = Math.max(0, Math.min(h - 1, Math.round(sy)));
+
+          const si = (iy*w + ix)*4;
+          const di = (y*w + x)*4;
+
+          dst.data[di]     = src.data[si];
+          dst.data[di + 1] = src.data[si + 1];
+          dst.data[di + 2] = src.data[si + 2];
+          dst.data[di + 3] = src.data[si + 3];
+        }
+      }
+      ctx.putImageData(dst, 0,0);
+    }
+    function pushUndoForSelected(){
+  if (!selected) return false;
+  const ctx = selected.el.getContext("2d");
+  const snap = ctx.getImageData(0,0, selected.el.width, selected.el.height);
+  paintUndoStack.push(snap);
+  if (paintUndoStack.length > 14) paintUndoStack.shift();
+  return true;
+}
+
+// 快速模糊：用 ctx.filter（性能好，iOS 也支持）
+function applyGaussianBlur(px){
+  if (!selected) return;
+  if (!pushUndoForSelected()) return;
+
+  const c = selected.el;
+  const ctx = c.getContext("2d");
+  const tmp = document.createElement("canvas");
+  tmp.width = c.width;
+  tmp.height = c.height;
+
+  const tctx = tmp.getContext("2d");
+  tctx.clearRect(0,0,tmp.width,tmp.height);
+  tctx.drawImage(c, 0,0);
+
+  ctx.save();
+  ctx.clearRect(0,0,c.width,c.height);
+  ctx.filter = `blur(${px}px)`;
+  ctx.drawImage(tmp, 0,0);
+  ctx.restore();
+}
+
+function applyBlackWhite(){
+  if (!selected) return;
+  if (!pushUndoForSelected()) return;
+
+  const c = selected.el;
+  const ctx = c.getContext("2d", { willReadFrequently: true });
+  const img = ctx.getImageData(0,0,c.width,c.height);
+  const d = img.data;
+
+  for (let i=0; i<d.length; i+=4){
+    const a = d[i+3];
+    if (a === 0) continue;
+    const r = d[i], g = d[i+1], b = d[i+2];
+    // 更接近人眼的灰度
+    const y = (0.2126*r + 0.7152*g + 0.0722*b) | 0;
+    d[i] = d[i+1] = d[i+2] = y;
+  }
+  ctx.putImageData(img, 0,0);
+}
+
+// amount: 0~1，建议 0.1~0.35
+function applyNoise(amount){
+  if (!selected) return;
+  if (!pushUndoForSelected()) return;
+
+  const c = selected.el;
+  const ctx = c.getContext("2d", { willReadFrequently: true });
+  const img = ctx.getImageData(0,0,c.width,c.height);
+  const d = img.data;
+
+  const amp = Math.max(0, Math.min(1, amount)) * 255;
+
+  for (let i=0; i<d.length; i+=4){
+    const a = d[i+3];
+    if (a === 0) continue;
+    const n = (Math.random()*2 - 1) * amp;
+    d[i]   = clamp(d[i]   + n, 0, 255);
+    d[i+1] = clamp(d[i+1] + n, 0, 255);
+    d[i+2] = clamp(d[i+2] + n, 0, 255);
+  }
+  ctx.putImageData(img, 0,0);
+}
+
+
+    stage.addEventListener("touchstart", (e)=>{
+      if (!selected) return;
+      if (e.touches.length === 2){
+        e.preventDefault();
+        const t1 = e.touches[0], t2 = e.touches[1];
+        const dx = t2.clientX - t1.clientX;
+        const dy = t2.clientY - t1.clientY;
+        gesture.active = true;
+        gesture.startDist = Math.hypot(dx,dy);
+        gesture.startAng  = Math.atan2(dy,dx);
+        gesture.baseScale = selected.scale;
+        gesture.baseRot   = selected.rot;
+      }
+    }, { passive:false });
+
+    stage.addEventListener("touchmove", (e)=>{
+      if (!gesture.active || !selected) return;
+      if (e.touches.length !== 2) return;
+      e.preventDefault();
+
+      const t1 = e.touches[0], t2 = e.touches[1];
+      const dx = t2.clientX - t1.clientX;
+      const dy = t2.clientY - t1.clientY;
+
+      const dist = Math.hypot(dx,dy);
+      const ang  = Math.atan2(dy,dx);
+
+      const scale = gesture.baseScale * (dist / Math.max(1, gesture.startDist));
+      const rot   = gesture.baseRot + (ang - gesture.startAng);
+
+      selected.scale = clamp(scale, 0.2, 6);
+      selected.rot = rot;
+      applyTransform(selected);
+    }, { passive:false });
+
+    stage.addEventListener("touchend", ()=>{ gesture.active = false; });
+    stage.addEventListener("touchcancel", ()=>{ gesture.active = false; });
+
+    // ✅ tap 判定：避免轻微移动造成混乱
+    let stageTap = { down:false, x:0, y:0, id:null };
+    const TAP_MOVE_THRESHOLD = 10;
+
+    stage.addEventListener("pointerdown", (e)=>{
+      if (
+        e.target.closest(".topbar") ||
+        e.target.closest("#editbar") ||
+        e.target.closest("#gridbar") ||   // ✅ 新增
+        e.target.closest("#libPanel")
+      ) return;
+
+      if (!video.srcObject) { showHint("先点 Start Camera", 900); return; }
+
+      if (e.target.closest(".sticker")) return;
+
+      if (editbar.style.display === "flex") {
+        editbar.style.display = "none";
+        paintUndoStack = [];
+        showHint("exit Edit", 800);
+        return;
+      }
+
+      stageTap.down = true;
+      stageTap.x = e.clientX;
+      stageTap.y = e.clientY;
+      stageTap.id = e.pointerId;
+
+      if (captureMode !== "mp"){
+        e.preventDefault();
+        pointerDown = true;
+
+        const p = localPointFromClient(e.clientX, e.clientY);
+        startPt = p;
+
+        roi = { x:p.x, y:p.y, w:1, h:1 };
+        path = [ {x:p.x, y:p.y} ];
+
+        showROI(roi);
+        if (captureMode === "draw") drawPathPreview(path);
+      }
+    }, { passive:false });
+
+    stage.addEventListener("pointermove", (e)=>{
+      if (!pointerDown || !startPt) return;
+      e.preventDefault();
+
+      const p = localPointFromClient(e.clientX, e.clientY);
+
+      if (captureMode === "rect" || captureMode === "grid"){
+        const x = Math.min(startPt.x, p.x);
+        const y = Math.min(startPt.y, p.y);
+        const w = Math.abs(p.x - startPt.x);
+        const h = Math.abs(p.y - startPt.y);
+        roi = {
+          x: clamp(x, 0, startPt.W-1),
+          y: clamp(y, 0, startPt.H-1),
+          w: clamp(w, 1, startPt.W),
+          h: clamp(h, 1, startPt.H)
+        };
+        showROI(roi);
+      } else if (captureMode === "draw"){
+        path.push({x:p.x, y:p.y});
+        let minX=Infinity, minY=Infinity, maxX=-Infinity, maxY=-Infinity;
+        for (const pt of path){
+          minX = Math.min(minX, pt.x); minY = Math.min(minY, pt.y);
+          maxX = Math.max(maxX, pt.x); maxY = Math.max(maxY, pt.y);
+        }
+        roi = { x:minX, y:minY, w:(maxX-minX), h:(maxY-minY) };
+        showROI(roi);
+        drawPathPreview(path);
+      }
+    }, { passive:false });
+
+    stage.addEventListener("pointerup", async (e)=>{
+      // ✅ MP：pointerup 做 tap 判定 -> 触发分割
+      if (captureMode === "mp"){
+        if (stageTap.down && e.pointerId === stageTap.id){
+          const dx = e.clientX - stageTap.x;
+          const dy = e.clientY - stageTap.y;
+          const moved = Math.hypot(dx,dy) > TAP_MOVE_THRESHOLD;
+          stageTap.down = false;
+
+          if (!moved){
+            await handleMediaPipeTap(e);
+          }
+        }
+        return;
+      }
+
+      // RECT/DRAW：原逻辑
+      if (!pointerDown) return;
+      e.preventDefault();
+      pointerDown = false;
+
+      if (!roi || roi.w < 8 || roi.h < 8){
+        hideROI();
+        roi = null; path = []; startPt = null;
+        clearPathPreview();
+        return;
+      }
+
+    if (captureMode === "grid"){
+      pendingGridRect = { ...roi };
+      gridbar.style.display = "flex";
+
+      showRoiGridPreview(true);
+      updateRoiGridPreview();
+
+      console.log("GRID branch fired. display =", getComputedStyle(gridbar).display);
+
+
+      showHint("设置行列后点 done", 900);
+      // GRID 这里先不 hideROI，让你看到外框
+    } else if (captureMode === "rect"){
+      await createStickerFromROI(roi, null);
+      hideROI();
+    } else if (captureMode === "draw"){
+      await createStickerFromROI(roi, (path.length>=2 ? path : null));
+      hideROI();
+    }
+
+
+    if (captureMode !== "grid"){
+      roi = null; path = []; startPt = null;
+      clearPathPreview();
+    } else {
+      // GRID：保留 roiBox 外框，等 done/cancel
+      roi = null; path = []; startPt = null;
+      clearPathPreview();
+    }
+
+    }, { passive:false });
+
+    stage.addEventListener("pointercancel", ()=>{
+      stageTap.down = false;
+      pointerDown = false;
+      hideROI();
+      roi = null; path = []; startPt = null;
+      clearPathPreview();
+    });
+
+    async function createStickerFromROI(rect, pathPoints){
+      const crop = cssRectToVideoCrop(rect);
+      if (!crop) return;
+
+      const dpr = Math.max(1, Math.min(window.devicePixelRatio || 1, 3));
+      const src = document.createElement("canvas");
+      src.width  = Math.round(rect.w * dpr);
+      src.height = Math.round(rect.h * dpr);
+      const ctx = src.getContext("2d");
+      ctx.imageSmoothingEnabled = true;
+      ctx.clearRect(0,0,src.width, src.height);
+
+      if (pathPoints && pathPoints.length >= 2){
+        ctx.save();
+        ctx.scale(dpr, dpr);
+        ctx.beginPath();
+        ctx.moveTo(pathPoints[0].x - rect.x, pathPoints[0].y - rect.y);
+        for (const p of pathPoints) ctx.lineTo(p.x - rect.x, p.y - rect.y);
+        ctx.closePath();
+        ctx.clip();
+
+        ctx.drawImage(video, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, rect.w * dpr, rect.h * dpr);
+        ctx.restore();
+      } else {
+        ctx.drawImage(video, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, src.width, src.height);
+      }
+
+      addStickerFromCanvas(src, rect);
+      showHint("done", 1200);
+    }
+
+    async function createGridFromROI(rect, rows, cols){
+  const crop = cssRectToVideoCrop(rect);
+  if (!crop) return;
+
+  // 用视频真实像素裁切（最稳）
+  const frameCanvas = getVideoFrameCanvas();
+  if (!frameCanvas){
+    showHint("视频未就绪", 900);
+    return;
+  }
+
+  const dpr = Math.max(1, Math.min(window.devicePixelRatio || 1, 3));
+
+  // 先把“大框”整块画出来（像你 rect 截取那样）
+  const big = document.createElement("canvas");
+  big.width  = Math.round(rect.w * dpr);
+  big.height = Math.round(rect.h * dpr);
+
+  const bctx = big.getContext("2d");
+  bctx.imageSmoothingEnabled = true;
+  bctx.clearRect(0,0,big.width,big.height);
+
+  // 从 frameCanvas 上裁切 crop（crop 是视频像素坐标）
+  // frameCanvas 的尺寸就是 video.videoWidth/Height
+  bctx.drawImage(
+    frameCanvas,
+    crop.sx, crop.sy, crop.sw, crop.sh,
+    0, 0, big.width, big.height
+  );
+
+  // 计算每个 cell 的 css 尺寸
+  const cellW = rect.w / cols;
+  const cellH = rect.h / rows;
+
+  // 每个 cell 在 big canvas 上的像素尺寸
+  const cellPW = big.width / cols;
+  const cellPH = big.height / rows;
+
+  const gid = "grid_" + (gridGroupSeq++);
+  const group = {
+    id: gid,
+    rect: { ...rect },
+    rows, cols,
+    cells: [],          // 每个 cell 的“槽位”坐标
+    pieces: []          // sticker 对象引用
+  };
+
+  // 预先算好每个槽位的位置
+  for (let r=0; r<rows; r++){
+    for (let c=0; c<cols; c++){
+      group.cells.push({
+        x: rect.x + c * cellW,
+        y: rect.y + r * cellH,
+        w: cellW,
+        h: cellH
+      });
+    }
+  }
+
+  // 生成碎片
+  for (let r=0; r<rows; r++){
+    for (let c=0; c<cols; c++){
+      const src = document.createElement("canvas");
+      src.width = Math.max(1, Math.round(cellPW));
+      src.height = Math.max(1, Math.round(cellPH));
+      const sctx = src.getContext("2d");
+      sctx.clearRect(0,0,src.width,src.height);
+
+      // 从 big canvas 上切片
+      sctx.drawImage(
+        big,
+        c * cellPW, r * cellPH, cellPW, cellPH,
+        0, 0, src.width, src.height
+      );
+
+      // 放置到对应格子槽位（css 坐标）
+      const slot = group.cells[r*cols + c];
+      addStickerFromCanvas(src, { x: slot.x, y: slot.y, w: slot.w, h: slot.h });
+
+      // 取到刚刚 push 的最后一个 sticker
+      const st = stickers[stickers.length - 1];
+      st.groupId = gid;
+      st.slotIndex = r*cols + c;
+      st.inGrid = true;
+
+      // 让碎片“像拼图一样更像网格”
+      st.el.style.borderRadius = "0px";
+
+      group.pieces.push(st);
+    }
+  }
+
+  gridGroups.push(group);
+  showHint(`GRID done (${rows}×${cols})，摇一摇洗牌`, 1400);
+}
+
+
+    // =========================
+    // ✅ MP：永远保留你点到的物体（自动判断需不需要反转）
+    // =========================
+    async function handleMediaPipeTap(e){
+    e.preventDefault?.();
+    if (!interactiveSegmenter) { showHint("模型未就绪", 800); return; }
+    if (isProcessing) return;
+
+    const vRect = video.getBoundingClientRect();
+    const { cx: clientX, cy: clientY } = getClientXY(e);
+    if (clientX == null || clientY == null) return;
+
+    console.log("tap event", e.type, "client", clientX, clientY);
+    console.log("video ready", video.videoWidth, video.videoHeight, "seg", !!interactiveSegmenter);
+
+    // 点击必须落在视频可视区域内
+    if (clientX < vRect.left || clientX > vRect.right || clientY < vRect.top || clientY > vRect.bottom) return;
+
+    isProcessing = true;
+    try{
+    // 点击点在 video DOM（object-fit:cover 的可视区域）内的归一化坐标
+    const relativeX = (clientX - vRect.left) / vRect.width;
+    const relativeY = (clientY - vRect.top) / vRect.height;
+    console.log("relative", relativeX, relativeY);
+
+    const result = await new Promise(resolve => {
+    const frameCanvas = getVideoFrameCanvas();
+    if (!frameCanvas){
+    showHint("视频未就绪（等相机画面出现再点）", 900);
+    isProcessing = false;
+    return;
+    }
+
+    interactiveSegmenter.segment(
+    frameCanvas,
+    { keypoint: { x: relativeX, y: relativeY } },
+    (r)=>resolve(r)
+    );
+
+    });
+
+    if (!result?.categoryMask){
+      showHint("没有得到 mask（换个点试试）", 900);
+      isProcessing = false;
+      return;
+    }
+
+    // ✅ 使用视频“真实像素尺寸”，不是屏幕尺寸
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
+
+    // 把当前帧画到 fullCanvas 上（与 mask 同分辨率）
+    const fullCanvas = document.createElement("canvas");
+    fullCanvas.width = vw;
+    fullCanvas.height = vh;
+    const fctx = fullCanvas.getContext("2d", { willReadFrequently: true });
+    fctx.drawImage(video, 0, 0, vw, vh);
+
+    // 读像素
+    const frameData = fctx.getImageData(0, 0, vw, vh);
+    const rgba = frameData.data;
+
+    // 读 mask
+    const maskData = result.categoryMask.getAsFloat32Array();
+
+    // ✅ 判断 mask 类型：有些设备给 0/1（像 uint8），有些给 0~1（float）
+    let isUintMask = true;
+    for (let k = 0; k < 40 && k < maskData.length; k++){
+      const v = maskData[k];
+      if (v !== 0 && v !== 1) { isUintMask = false; break; }
+    }
+
+    const TH = 0.4;
+
+    const isMasked = (idx) => {
+      const v = maskData[idx];
+      return isUintMask ? (v > 0) : (v >= TH);
+    };
+
+    // ✅ 用“点击点”决定保留哪一类（前景/背景）
+    const mx = Math.max(0, Math.min(vw - 1, Math.floor(relativeX * vw)));
+    const my = Math.max(0, Math.min(vh - 1, Math.floor(relativeY * vh)));
+    const mi = my * vw + mx;
+
+    const clickedClass = isMasked(mi);
+    console.log("mask clicked:", maskData[mi], "isUint:", isUintMask, "clickedClass:", clickedClass);
+
+    // 只保留跟 clickedClass 相同的像素
+    for (let i = 0; i < vw * vh; i++){
+      if (isMasked(i) !== clickedClass) rgba[i*4 + 3] = 0;
+    }
+    fctx.putImageData(frameData, 0, 0);
+
+    // trim 到非透明边界，得到“物体本体”canvas
+    const trimmed = trimCanvas(fullCanvas);
+    if (!trimmed){
+      showHint("抠图为空", 900);
+      isProcessing = false;
+      return;
+    }
+
+    // ✅ 把“视频像素坐标”映射回舞台（object-fit:cover）
+    const sw = stage.clientWidth, sh = stage.clientHeight;
+    const videoAspect = vw / vh;
+    const stageAspect = sw / sh;
+
+    let drawW, drawH, offsetX, offsetY;
+    if (stageAspect > videoAspect){
+      drawW = sw;
+      drawH = sw / videoAspect;
+      offsetX = 0;
+      offsetY = (sh - drawH) / 2;
+    } else {
+      drawH = sh;
+      drawW = sh * videoAspect;
+      offsetY = 0;
+      offsetX = (sw - drawW) / 2;
+    }
+
+    let nx = Number(trimmed.dataset.originX) / vw;
+    const ny = Number(trimmed.dataset.originY) / vh;
+    const nw = trimmed.width / vw;
+    const nh = trimmed.height / vh;
+
+    // 前置镜像要反过来
+    if (facingMode === "user"){
+      nx = 1 - nx - nw;
+    }
+
+    const cssRect = {
+      x: offsetX + nx * drawW,
+      y: offsetY + ny * drawH,
+      w: nw * drawW,
+      h: nh * drawH
+    };
+
+    addStickerFromCanvas(trimmed, cssRect);
+    showHint("done", 1300);
+
+  } catch(err){
+    console.error(err);
+    showHint("分割出错（可能网络/模型/权限）", 1200);
+  }
+  isProcessing = false;
+}
+
+
+    function trimCanvas(c){
+      const ctx = c.getContext("2d");
+      const pixels = ctx.getImageData(0,0,c.width,c.height);
+      const l = pixels.data.length;
+      let bound = { top:null, left:null, right:null, bottom:null };
+      let x,y;
+
+      for (let i=0;i<l;i+=4){
+        if (pixels.data[i+3] !== 0){
+          x = (i/4) % c.width;
+          y = ~~((i/4) / c.width);
+          if (bound.top === null) bound.top = y;
+          if (bound.left === null) bound.left = x;
+          else if (x < bound.left) bound.left = x;
+
+          if (bound.right === null) bound.right = x;
+          else if (bound.right < x) bound.right = x;
+
+          if (bound.bottom === null) bound.bottom = y;
+          else if (bound.bottom < y) bound.bottom = y;
+        }
+      }
+      if (bound.top === null) return null;
+
+      const trimW = bound.right - bound.left + 1;
+      const trimH = bound.bottom - bound.top + 1;
+
+      const out = document.createElement("canvas");
+      out.width = trimW;
+      out.height = trimH;
+      out.getContext("2d").drawImage(c, bound.left, bound.top, trimW, trimH, 0,0, trimW, trimH);
+
+      out.dataset.originX = bound.left;
+      out.dataset.originY = bound.top;
+      return out;
+    }
+
+    function loadLibrary(){
+      try{ return JSON.parse(localStorage.getItem(LIB_KEY) || "[]"); }
+      catch{ return []; }
+    }
+    function saveLibrary(items){
+      localStorage.setItem(LIB_KEY, JSON.stringify(items));
+    }
+    function refreshLibraryUI(){
+      const items = loadLibrary();
+      libList.innerHTML = "";
+      if (!items.length){
+        libList.innerHTML = `<div class="small" style="opacity:.7;">(empty)</div>`;
+        return;
+      }
+      items.forEach((it, idx)=>{
+        const img = document.createElement("img");
+        img.className = "thumb";
+        img.src = it.dataURL;
+        img.title = `#${idx+1}`;
+        img.addEventListener("click", ()=>{
+          addStickerFromDataURL(it.dataURL, it.w, it.h);
+        });
+        libList.appendChild(img);
+      });
+    }
+
+    async function addStickerFromDataURL(dataURL, w, h){
+      const img = new Image();
+      img.src = dataURL;
+      await img.decode().catch(()=>{});
+
+      const rect = stage.getBoundingClientRect();
+      const targetW = clamp(w || 160, 60, rect.width * 0.8);
+      const targetH = clamp(h || 120, 60, rect.height* 0.8);
+
+      const x = (rect.width - targetW)/2;
+      const y = (rect.height - targetH)/2;
+
+      const src = document.createElement("canvas");
+      src.width = img.naturalWidth || 512;
+      src.height = img.naturalHeight || 512;
+      const ctx = src.getContext("2d");
+      ctx.drawImage(img, 0,0, src.width, src.height);
+
+      addStickerFromCanvas(src, { x, y, w: targetW, h: targetH });
+      showHint("已放回", 900);
+    }
+
+    function stickerToDataURL(st){
+      return st.el.toDataURL("image/png");
+    }
+
+    document.getElementById("btnStart").addEventListener("click", startCamera);
+
+    document.getElementById("btnFlip").addEventListener("click", async ()=>{
+      facingMode = (facingMode === "environment") ? "user" : "environment";
+      await startCamera();
+      showHint(facingMode === "user" ? "前置（镜像）" : "后置", 700);
+    });
+
+    document.getElementById("btnMotion").addEventListener("click", async ()=>{
+  if (typeof DeviceMotionEvent !== "undefined" &&
+      typeof DeviceMotionEvent.requestPermission === "function") {
+    try {
+      const res = await DeviceMotionEvent.requestPermission();
+      if (res === "granted") {
+        installShake();
+        showHint("motion granted ✓", 1200);
+      } else {
+        showHint("motion denied", 1200);
+      }
+    } catch (e) {
+      showHint("motion error", 1200);
+    }
+  } else {
+    installShake();
+    showHint("motion auto enabled", 1200);
+  }
+});
+
+const btnGravity = document.getElementById("btnGravity");
+
+btnGravity.addEventListener("click", async ()=>{
+  // 切到 ON
+  if (!gravityMode){
+    try{
+      const ok = await requestOrientationPermissionIfNeeded();
+      if (!ok){
+        showHint("Gravity permission denied", 1200);
+        return;
+      }
+
+      window.addEventListener("deviceorientation", onDeviceOrientation, true);
+
+      gravityMode = true;
+      btnGravity.textContent = "Gravity ON";
+      btnGravity.classList.add("active");
+      showHint("Gravity ON：倾斜手机推动碎片", 1200);
+
+      startGravityLoop();
+    }catch(e){
+      showHint("Gravity permission error", 1200);
+    }
+    return;
+  }
+
+  // 切到 OFF
+  gravityMode = false;
+  window.removeEventListener("deviceorientation", onDeviceOrientation, true);
+  btnGravity.textContent = "Gravity OFF";
+  btnGravity.classList.remove("active");
+  showHint("Gravity OFF", 800);
+});
+
+
+    // ===== 全局视频滤镜：事件绑定 =====
+    const btnVidBW   = document.getElementById("btnVidBW");
+    const btnVidBlur = document.getElementById("btnVidBlur");
+    const vidBlurEl  = document.getElementById("vidBlur");
+
+    btnVidBW.addEventListener("click", ()=>{
+    videoFx.bw = !videoFx.bw;
+    applyVideoFilter();
+    showHint(videoFx.bw ? "Video B&W ON" : "Video B&W OFF", 700);
+    });
+
+    btnVidBlur.addEventListener("click", ()=>{
+    videoFx.blur = !videoFx.blur;
+    if (videoFx.blur && videoFx.blurPx === 0) videoFx.blurPx = 6;
+    applyVideoFilter();
+    showHint(videoFx.blur ? `Video Blur ${videoFx.blurPx}px` : "Video Blur OFF", 700);
+    });
+
+    vidBlurEl.addEventListener("input", ()=>{
+    videoFx.blurPx = parseInt(vidBlurEl.value, 10) || 0;
+    videoFx.blur = videoFx.blurPx > 0;
+    applyVideoFilter();
+    });
+
+    btnSave.addEventListener("click", ()=>{
+      if (!selected) return;
+      const items = loadLibrary();
+      items.unshift({ dataURL: stickerToDataURL(selected), w: selected.w, h: selected.h, t: Date.now() });
+      saveLibrary(items.slice(0, 60));
+      refreshLibraryUI();
+      showHint("save to Library", 900);
+    });
+
+    btnEdit.addEventListener("click", ()=>{
+      if (!selected) return;
+      editbar.style.display = "flex";
+      paintUndoStack = [];
+      showHint("edit：拖动=拉伸；双指=旋转缩放；Done 退出", 1300);
+    });
+
+    document.getElementById("btnFxBlur").addEventListener("click", ()=>{
+    if (!selected) return;
+
+    // 用 radius 滑块控制 CSS blur（iOS 稳定）
+    const px = Math.round(parseInt(radiusEl.value, 10) / 12); // 稍微更明显
+    selected.blurPx = clamp(px, 0, 16);
+
+    applyStickerCssFilter(selected);
+    showHint(`Blur ${selected.blurPx}px`, 650);
+    });
+
+
+    document.getElementById("btnFxBW").addEventListener("click", ()=>{
+    if (!selected) return;
+    applyBlackWhite();
+    showHint("B&W", 650);
+    });
+
+    document.getElementById("btnFxNoise").addEventListener("click", ()=>{
+    if (!selected) return;
+    // 用 strength 滑块当噪点强度（0~1）
+    const amt = Math.abs(parseInt(strengthEl.value, 10)) / 100; // 0~1
+    applyNoise(clamp(amt * 0.35, 0.05, 0.45));
+    showHint("Noise", 650);
+    });
+
+    document.getElementById("btnUndoPaint").addEventListener("click", ()=>{
+      if (!selected || paintUndoStack.length === 0) return;
+      const prev = paintUndoStack.pop();
+      const ctx = selected.el.getContext("2d");
+      ctx.putImageData(prev, 0, 0);
+      showHint("undo", 650);
+    });
+
+    document.getElementById("btnDone").addEventListener("click", ()=>{
+      editbar.style.display = "none";
+      paintUndoStack = [];
+      showHint("exit Edit", 800);
+    });
+
+    document.getElementById("btnLibrary").addEventListener("click", ()=>{
+      libPanel.style.display = (!libPanel.style.display || libPanel.style.display === "none") ? "block" : "none";
+      refreshLibraryUI();
+    });
+
+    document.getElementById("btnLibClose").addEventListener("click", ()=>{
+      libPanel.style.display = "none";
+    });
+
+    document.getElementById("btnLibClear").addEventListener("click", ()=>{
+      if (!confirm("Clear library?")) return;
+      saveLibrary([]);
+      refreshLibraryUI();
+    });
+
+    document.getElementById("btnUndoObj").addEventListener("click", ()=>{
+      const last = objUndoStack.pop();
+      if (!last) return;
+      if (selected === last) deselect();
+      last.el.remove();
+      stickers = stickers.filter(s => s !== last);
+      showHint("undo", 850);
+    });
+
+    document.getElementById("btnClearAll").addEventListener("click", ()=>{
+      stickers.forEach(s => s.el.remove());
+      stickers = [];
+      objUndoStack = [];
+      deselect();
+      showHint("已清空", 800);
+    });
+
+    function syncGridVals(){
+      gridRowsVal.textContent = String(gridRowsEl.value);
+      gridColsVal.textContent = String(gridColsEl.value);
+      updateRoiGridPreview();
+    }
+    gridRowsEl.addEventListener("input", syncGridVals);
+    gridColsEl.addEventListener("input", syncGridVals);
+    syncGridVals();
+
+document.getElementById("btnGridCancel").addEventListener("click", ()=>{
+  gridbar.style.display = "none";
+  showRoiGridPreview(false); 
+  pendingGridRect = null;
+  hideROI();
+  showHint("cancel", 700);
+});
+
+document.getElementById("btnGridDone").addEventListener("click", async ()=>{
+  if (!pendingGridRect) return;
+  const rows = parseInt(gridRowsEl.value, 10) || 1;
+  const cols = parseInt(gridColsEl.value, 10) || 1;
+  await createGridFromROI(pendingGridRect, rows, cols);
+
+  showRoiGridPreview(false);
+
+  gridbar.style.display = "none";
+  pendingGridRect = null;
+  hideROI();
+});
+
+function shuffleGridGroup(group){
+  if (!group?.pieces?.length) return;
+
+  // 随机打乱槽位 index
+  const indices = group.cells.map((_, i)=>i);
+  for (let i=indices.length-1; i>0; i--){
+    const j = (Math.random() * (i+1)) | 0;
+    [indices[i], indices[j]] = [indices[j], indices[i]];
+  }
+
+  // 把每个 piece 移动到新的槽位，但外框不变
+  group.pieces.forEach((st, k)=>{
+    const slot = group.cells[indices[k]];
+    st.x = slot.x;
+    st.y = slot.y;
+
+    st.el.style.transition = "left 180ms ease, top 180ms ease";
+    st.el.style.left = st.x + "px";
+    st.el.style.top  = st.y + "px";
+
+    // 过一会儿取消 transition，避免影响你后续拖拽手感
+    clearTimeout(st._t);
+    st._t = setTimeout(()=>{ st.el.style.transition = ""; }, 220);
+  });
+
+  showHint("shuffle!", 700);
+}
+
+function shuffleAllGrids(){
+  if (!gridGroups.length) return;
+  // 你也可以只洗最后一个：gridGroups[gridGroups.length-1]
+  gridGroups.forEach(g => shuffleGridGroup(g));
+}
+
+// =========================
+// Gravity Mode (tilt-driven) for all stickers
+// =========================
+let gravityMode = false;
+let gravityRAF = 0;
+let lastT = 0;
+
+// tilt -> force vector（单位：px/s^2）
+let tiltAX = 0; // right positive
+let tiltAY = 0; // down positive
+
+// iOS 上用 DeviceOrientation 取倾斜更稳定
+function onDeviceOrientation(e){
+  // gamma: 左右倾斜 [-90..90]，beta: 前后倾斜 [-180..180]
+  const g = (typeof e.gamma === "number") ? e.gamma : 0;
+  const b = (typeof e.beta  === "number") ? e.beta  : 0;
+
+  // 归一化到 [-1..1]，并限制极端值
+  const nx = clamp(g / 35, -1, 1); // 35°左右就满力
+  const ny = clamp(b / 35, -1, 1);
+
+  // 转成加速度（越大越“滑”）
+  const A = 520; // px/s^2（温和：320~700）
+  tiltAX = nx * A;
+  tiltAY = ny * A;
+}
+
+function startGravityLoop(){
+  if (gravityRAF) return;
+  lastT = 0;
+  gravityRAF = requestAnimationFrame(gravityTick);
+}
+
+function stopGravityLoop(){
+  if (gravityRAF) cancelAnimationFrame(gravityRAF);
+  gravityRAF = 0;
+  lastT = 0;
+
+  // 停止时把力归零，让它慢慢停住
+  tiltAX = 0;
+  tiltAY = 0;
+}
+
+function gravityTick(t){
+  const dt = lastT ? Math.min(0.033, (t - lastT)/1000) : 0.016;
+  lastT = t;
+
+  const W = stage.clientWidth;
+  const H = stage.clientHeight;
+
+  // 阻尼 / 反弹（轻量不夸张）
+  const linearDamp = 0.90;   // 越小越快停
+  const angDamp    = 0.92;
+  const bounce     = 0.58;   // 边缘反弹力度
+  const maxV       = 1200;   // 速度上限，防止失控
+
+  // 很轻的随机旋转（可关掉：把 jitter=0）
+  const jitter = 0.25; // rad/s^2（越大越晃）
+  
+  for (const st of stickers){
+    // 手在拖 / 编辑时不参与物理
+    if (st._physLock) continue;
+
+    // 初始化（兼容旧 sticker）
+    st.vx ??= 0; st.vy ??= 0; st.av ??= 0;
+
+    // 1) 倾斜力 -> 速度
+    st.vx += tiltAX * dt;
+    st.vy += tiltAY * dt;
+
+    // 2) 轻微旋转趋势（速度越大越容易转一点点）
+    const sp = Math.hypot(st.vx, st.vy);
+    st.av += (Math.sign(st.vx)*0.15 + (Math.random()*2-1)*jitter) * dt * clamp(sp/800, 0, 1);
+
+    // 3) integrate
+    st.x += st.vx * dt;
+    st.y += st.vy * dt;
+    st.rot += st.av * dt;
+
+    // 速度限制
+    st.vx = clamp(st.vx, -maxV, maxV);
+    st.vy = clamp(st.vy, -maxV, maxV);
+    st.av = clamp(st.av, -3.0, 3.0);
+
+    // 边界（用显示尺寸：w/h * scale）
+    const w = st.w * st.scale;
+    const h = st.h * st.scale;
+
+    if (st.x < 0){ st.x = 0; st.vx = Math.abs(st.vx) * bounce; }
+    if (st.y < 0){ st.y = 0; st.vy = Math.abs(st.vy) * bounce; }
+    if (st.x + w > W){ st.x = Math.max(0, W - w); st.vx = -Math.abs(st.vx) * bounce; }
+    if (st.y + h > H){ st.y = Math.max(0, H - h); st.vy = -Math.abs(st.vy) * bounce; }
+
+    // 阻尼
+    st.vx *= linearDamp;
+    st.vy *= linearDamp;
+    st.av *= angDamp;
+
+    // 应用到 DOM
+    st.el.style.left = st.x + "px";
+    st.el.style.top  = st.y + "px";
+    applyTransform(st);
+  }
+
+  // very light collision push（可选：想更省事可以删掉这一段）
+  for (let i=0; i<stickers.length; i++){
+    const a = stickers[i];
+    if (a._physLock) continue;
+    const aw = a.w * a.scale, ah = a.h * a.scale;
+    const ax1 = a.x, ay1 = a.y, ax2 = a.x + aw, ay2 = a.y + ah;
+
+    for (let j=i+1; j<stickers.length; j++){
+      const b = stickers[j];
+      if (b._physLock) continue;
+      const bw = b.w * b.scale, bh = b.h * b.scale;
+      const bx1 = b.x, by1 = b.y, bx2 = b.x + bw, by2 = b.y + bh;
+
+      if (ax2 < bx1 || ax1 > bx2 || ay2 < by1 || ay1 > by2) continue;
+
+      const overlapX = Math.min(ax2, bx2) - Math.max(ax1, bx1);
+      const overlapY = Math.min(ay2, by2) - Math.max(ay1, by1);
+
+      const push = 0.5; // 推开力度（0.3~0.8）
+      if (overlapX < overlapY){
+        const dir = (a.x + aw/2) < (b.x + bw/2) ? -1 : 1;
+        const d = overlapX * push;
+        a.x += dir * d;
+        b.x -= dir * d;
+        a.vx *= 0.96; b.vx *= 0.96;
+      }else{
+        const dir = (a.y + ah/2) < (b.y + bh/2) ? -1 : 1;
+        const d = overlapY * push;
+        a.y += dir * d;
+        b.y -= dir * d;
+        a.vy *= 0.96; b.vy *= 0.96;
+      }
+
+      a.el.style.left = a.x + "px";
+      a.el.style.top  = a.y + "px";
+      b.el.style.left = b.x + "px";
+      b.el.style.top  = b.y + "px";
+    }
+  }
+
+  if (gravityMode){
+    gravityRAF = requestAnimationFrame(gravityTick);
+  }else{
+    stopGravityLoop();
+  }
+}
+
+async function requestOrientationPermissionIfNeeded(){
+  const DOE = window.DeviceOrientationEvent;
+  if (typeof DOE !== "undefined" && typeof DOE.requestPermission === "function"){
+    // iOS 需要用户手势触发
+    const res = await DOE.requestPermission();
+    return res === "granted";
+  }
+  return true; // 其他平台/旧版不需要
+}
+
+
+// iOS / Android: devicemotion
+let lastShakeAt = 0;
+function installShake(){
+  if (!("DeviceMotionEvent" in window)) return;
+
+  const TH = 16;      // 阈值（可调：12~22）
+  const GAP = 650;    // 防抖间隔
+
+  window.addEventListener("devicemotion", (e)=>{
+    showHint("motion event!", 300);
+    const now = Date.now();
+    if (now - lastShakeAt < GAP) return;
+
+    const a = e.accelerationIncludingGravity;
+    if (!a) return;
+
+    const mag = Math.sqrt((a.x||0)**2 + (a.y||0)**2 + (a.z||0)**2);
+    if (mag > TH){
+      lastShakeAt = now;
+      shuffleAllGrids();
+    }
+  }, { passive:true });
+}
+
+// iOS 13+ 可能要用户手势授权 motion
+async function requestMotionPermissionIfNeeded(){
+  const DME = window.DeviceMotionEvent;
+  if (typeof DME?.requestPermission === "function"){
+    try{
+      const res = await DME.requestPermission();
+      if (res !== "granted") showHint("Motion 权限未开启，无法摇一摇", 1200);
+    }catch{
+      showHint("Motion 权限请求失败", 1000);
+    }
+  }
+}
+
+// 在 Start Camera 后顺便装 shake（保证用户有一次点击手势）
+const _startCamera = startCamera;
+startCamera = async function(){
+  await _startCamera();
+  await requestMotionPermissionIfNeeded();
+  installShake();
+};
+
+// 桌面端备用：按 S 洗牌
+window.addEventListener("keydown", (e)=>{
+  if (e.key.toLowerCase() === "s") shuffleAllGrids();
+});
+
+
+
+    setActionEnabled(false);
+    setCaptureMode("mp");
+    resizeDrawLayer();
+    refreshLibraryUI();
+    initModel();
+  </script>
+</body>
+</html>
