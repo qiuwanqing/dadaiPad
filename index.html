@@ -364,7 +364,7 @@
   <div class="seg">
     <span class="pill">
       length
-      <input id="sideLen" type="range" min="2" max="60" value="18" />
+      <input id="sideLen" type="range" min="2" max="600" value="18" />
       <span id="sideLenVal">18</span>
     </span>
 
@@ -1244,10 +1244,11 @@ function applySideExtrude(thickness=18, dx=1, dy=1, darken=0.35, isPreview=false
     ctx.drawImage(base, 0, 0);
 
     const t = i / thickness;
-
-    ctx.globalCompositeOperation = "source-atop";
-    ctx.fillStyle = `rgba(${edgeCol.r},${edgeCol.g},${edgeCol.b},${0.20 + 0.30*t})`;
-    ctx.fillRect(ox, oy, w, h);
+    
+    //平均色
+    //ctx.globalCompositeOperation = "source-atop";
+    //ctx.fillStyle = `rgba(${edgeCol.r},${edgeCol.g},${edgeCol.b},${0.20 + 0.30*t})`;
+    //ctx.fillRect(ox, oy, w, h);
 
     if (darken > 0){
       ctx.globalCompositeOperation = "source-atop";
@@ -1948,6 +1949,7 @@ btnGravity.addEventListener("click", async ()=>{
         selected._sideBase = null;
 
         // 60 是你的 max，方向最大偏移就用 2 兜底
+        const maxLen = parseInt(sideLenEl.max, 10) || 60;
         ensureCanvasPadding(selected, 60 * 2 + 10);
 
         snapshotStickerBase(selected);
