@@ -1206,7 +1206,7 @@ function applyBlackWhite(){
       ctx.drawImage(base, 0, 0);
     }
 
-function applySideExtrude(thickness=18, dx=1, dy=1, darken=0.35){
+function applySideExtrude(thickness=18, dx=1, dy=1, darken=0.35, isPreview=false){
   if (!selected) return;
 
   // 只有“正式 apply”才入 undo
@@ -1214,7 +1214,7 @@ function applySideExtrude(thickness=18, dx=1, dy=1, darken=0.35){
     if (!pushUndoForSelected()) return;
   }
 
-  // ✅ padding 只在“正式 apply”时做；preview 不要反复换 canvas
+  // padding 只在“正式 apply”时做；preview 不要反复换 canvas
   if (!isPreview){
     const padCss = Math.ceil(thickness * (Math.max(Math.abs(dx), Math.abs(dy)) + 1) + 6);
     ensureCanvasPadding(selected, padCss);
@@ -1223,7 +1223,6 @@ function applySideExtrude(thickness=18, dx=1, dy=1, darken=0.35){
   const c = selected.el;
   const w = c.width, h = c.height;
 
-  // 基底（正面原图）
   const base = document.createElement("canvas");
   base.width = w; base.height = h;
   base.getContext("2d").drawImage(c, 0, 0);
@@ -1233,7 +1232,6 @@ function applySideExtrude(thickness=18, dx=1, dy=1, darken=0.35){
   const ctx = c.getContext("2d");
   ctx.clearRect(0,0,w,h);
 
-  // 侧面：用“平移整张 base 再挖掉正面区域”
   for (let i = thickness; i >= 1; i--){
     const ox = i * dx;
     const oy = i * dy;
@@ -1242,19 +1240,15 @@ function applySideExtrude(thickness=18, dx=1, dy=1, darken=0.35){
     ctx.globalCompositeOperation = "source-over";
     ctx.drawImage(base, ox, oy);
 
-    // ✅ 挖掉正面覆盖区域（只留下外面露出来的部分）
     ctx.globalCompositeOperation = "destination-out";
     ctx.drawImage(base, 0, 0);
 
-    // ✅ 侧面染色 + 温和暗化（不再黑得像炭）
     const t = i / thickness;
 
-    // 1) 先用边缘平均色轻轻“染一下”
     ctx.globalCompositeOperation = "source-atop";
     ctx.fillStyle = `rgba(${edgeCol.r},${edgeCol.g},${edgeCol.b},${0.20 + 0.30*t})`;
     ctx.fillRect(ox, oy, w, h);
 
-    // 2) 再非常轻地压暗一点点（让它有层次但不黑）
     if (darken > 0){
       ctx.globalCompositeOperation = "source-atop";
       ctx.fillStyle = `rgba(0,0,0,${darken * (0.06 + 0.18*t)})`;
@@ -1264,11 +1258,9 @@ function applySideExtrude(thickness=18, dx=1, dy=1, darken=0.35){
     ctx.restore();
   }
 
-  // 最后盖回正面
   ctx.globalCompositeOperation = "source-over";
   ctx.drawImage(base, 0, 0);
 
-  // （可选）让它更像“有投影”
   selected.sideOn = true;
   applyStickerCssFilter(selected);
 }
