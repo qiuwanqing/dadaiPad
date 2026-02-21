@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
-  <title>MP+RE+DR-3addshakeposition/mac</title>
+  <title>MP+RE+DR+grid+EM+GO+M/ipad</title>
 
   <script src="https://unpkg.com/vconsole@latest/dist/vconsole.min.js"></script>
   <script>var vConsole = new VConsole();</script>
@@ -311,6 +311,8 @@
     <button id="btnModeDraw">DRAW</button>
     <button id="btnModeGrid">GRID</button>
     <button id="btnFxSide" class="primary">Side</button>
+    <button id="btnFxMosaic" class="primary">Mosaic</button>
+    <button id="btnFxMBlur" class="primary">M-Blur</button>
 
     <button id="btnVidBW">V-B&W</button>
     <button id="btnVidBlur">V-Blur</button>
@@ -892,7 +894,7 @@ async function initModel(){
         st._physLock = true;
         st.vx = st.vy = st.av = 0;
 
-        if (editbar.style.display === "flex" && editMode === "stretch") {
+        if (editbar.style.display === "flex") {
           lastLocal = getLocalPointOnCanvas(el, e.clientX, e.clientY);
 
           const ctx = el.getContext("2d");
@@ -925,22 +927,44 @@ async function initModel(){
           return;
         }
 
-        if (editMode !== "stretch") return;
-        const local = getLocalPointOnCanvas(el, e.clientX, e.clientY);
-        if (!local) return;
+// ===== edit mode painting =====
+const local = getLocalPointOnCanvas(el, e.clientX, e.clientY);
+if (!local) return;
 
-        const radius = parseInt(radiusEl.value, 10);
-        const base = parseInt(strengthEl.value, 10) / 100;
-        const strength = Math.max(-1.25, Math.min(1.25, base * 1.35));
+const radius = parseInt(radiusEl.value, 10);
 
-        if (lastLocal){
-          const vx = local.x - lastLocal.x;
-          const vy = local.y - lastLocal.y;
-          applySmear(el, local.x, local.y, radius, vx, vy, strength);
-        }
-        lastLocal = local;
+// strength slider -> 0..1
+const s = Math.abs(parseInt(strengthEl.value, 10)) / 100;
 
-        e.preventDefault();
+if (editMode === "stretch"){
+  const base = parseInt(strengthEl.value, 10) / 100;
+  const strength = Math.max(-1.25, Math.min(1.25, base * 1.35));
+
+  if (lastLocal){
+    const vx = local.x - lastLocal.x;
+    const vy = local.y - lastLocal.y;
+    applySmear(el, local.x, local.y, radius, vx, vy, strength);
+  }
+  lastLocal = local;
+  e.preventDefault();
+  return;
+}
+
+if (editMode === "mosaic"){
+  const blockSize = Math.round(4 + s * 36); // 4~40
+  applyMosaicBrush(el, local.x, local.y, radius, blockSize);
+  lastLocal = local;
+  e.preventDefault();
+  return;
+}
+
+if (editMode === "mblur"){
+  const blurPx = Math.round(2 + s * 22); // 2~24
+  applyLocalBlurBrush(el, local.x, local.y, radius, blurPx);
+  lastLocal = local;
+  e.preventDefault();
+  return;
+}
       }, { passive:false });
 
       const end = (e)=>{
@@ -1002,6 +1026,90 @@ async function initModel(){
       }
       ctx.putImageData(dst, 0,0);
     }
+
+  // ===== Mosaic Brush (Square pixelate in local patch) =====
+  function applyMosaicBrush(canvas, cx, cy, radius, blockSizePx){
+    const ctx = canvas.getContext("2d", { willReadFrequently:true });
+    const w = canvas.width, h = canvas.height;
+
+    const r = Math.max(4, radius|0);
+    const bs = Math.max(2, blockSizePx|0);
+
+    const x0 = clamp((cx - r)|0, 0, w-1);
+    const y0 = clamp((cy - r)|0, 0, h-1);
+    const x1 = clamp((cx + r)|0, 0, w);
+    const y1 = clamp((cy + r)|0, 0, h);
+
+    const pw = Math.max(1, x1 - x0);
+    const ph = Math.max(1, y1 - y0);
+
+    const patch = ctx.getImageData(x0, y0, pw, ph);
+
+    const dw = Math.max(1, Math.round(pw / bs));
+    const dh = Math.max(1, Math.round(ph / bs));
+
+    const tmp1 = document.createElement("canvas");
+    tmp1.width = pw; tmp1.height = ph;
+    tmp1.getContext("2d").putImageData(patch, 0, 0);
+
+    const tmp2 = document.createElement("canvas");
+    tmp2.width = dw; tmp2.height = dh;
+    const t2 = tmp2.getContext("2d");
+    t2.imageSmoothingEnabled = true;
+    t2.clearRect(0,0,dw,dh);
+    t2.drawImage(tmp1, 0,0, pw,ph, 0,0, dw,dh);
+
+    const tmp3 = document.createElement("canvas");
+    tmp3.width = pw; tmp3.height = ph;
+    const t3 = tmp3.getContext("2d");
+    t3.imageSmoothingEnabled = false;
+    t3.clearRect(0,0,pw,ph);
+    t3.drawImage(tmp2, 0,0, dw,dh, 0,0, pw,ph);
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI*2);  // 圆形笔刷
+    // 方形笔刷就改成：ctx.rect(cx-r, cy-r, 2*r, 2*r);
+    ctx.clip();
+
+    ctx.drawImage(tmp3, x0, y0);
+    ctx.restore();
+  }
+
+  // ===== Local Blur Brush =====
+  function applyLocalBlurBrush(canvas, cx, cy, radius, blurPx){
+    const ctx = canvas.getContext("2d");
+    const w = canvas.width, h = canvas.height;
+
+    const r  = Math.max(6, radius|0);
+    const bp = clamp(blurPx|0, 1, 30);
+
+    const x0 = clamp((cx - r - 2)|0, 0, w-1);
+    const y0 = clamp((cy - r - 2)|0, 0, h-1);
+    const x1 = clamp((cx + r + 2)|0, 0, w);
+    const y1 = clamp((cy + r + 2)|0, 0, h);
+
+    const pw = Math.max(1, x1 - x0);
+    const ph = Math.max(1, y1 - y0);
+
+    const tmp = document.createElement("canvas");
+    tmp.width = pw; tmp.height = ph;
+    const tctx = tmp.getContext("2d");
+    tctx.drawImage(canvas, x0, y0, pw, ph, 0, 0, pw, ph);
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI*2);
+    // 方形笔刷就改成：ctx.rect(cx-r, cy-r, 2*r, 2*r);
+    ctx.clip();
+
+    ctx.filter = `blur(${bp}px)`;
+    ctx.drawImage(tmp, x0, y0);
+
+    ctx.restore();
+  }
+
+
     function pushUndoForSelected(){
   if (!selected) return false;
   const ctx = selected.el.getContext("2d");
@@ -1252,6 +1360,8 @@ function applySideExtrude(thickness=18, dx=1, dy=1, darken=0.35, isPreview=false
 
     if (darken > 0){
       ctx.globalCompositeOperation = "source-atop";
+    //ctx.fillStyle = `rgba(0,0,0,${darken * (0.06 + 0.18*t)})`;
+      
       ctx.fillStyle = `rgba(0,0,0,${(darken / thickness) * (0.06 + 0.18*t)})`;
       ctx.fillRect(ox, oy, w, h);
     }
@@ -1910,7 +2020,8 @@ btnGravity.addEventListener("click", async ()=>{
       if (!selected) return;
       editbar.style.display = "flex";
       paintUndoStack = [];
-      showHint("edit：拖动=拉伸；双指=旋转缩放；Done 退出", 1300);
+      editMode = "stretch"; 
+      showHint("edit：拖动=拉伸；双指=旋转缩放；Done 退出；顶栏可切 Mosaic / M-Blur", 1300);
     });
 
     document.getElementById("btnFxBlur").addEventListener("click", ()=>{
@@ -1937,6 +2048,22 @@ btnGravity.addEventListener("click", async ()=>{
     const amt = Math.abs(parseInt(strengthEl.value, 10)) / 100; // 0~1
     applyNoise(clamp(amt * 0.35, 0.05, 0.45));
     showHint("Noise", 650);
+    });
+
+    // ===== Mosaic 工具 =====
+    const btnFxMosaic = document.getElementById("btnFxMosaic");
+    const btnFxMBlur  = document.getElementById("btnFxMBlur");
+
+    btnFxMosaic.addEventListener("click", ()=>{
+      if (!selected) return;
+      editMode = "mosaic";
+      showHint("Mosaic brush：拖动涂抹方块马赛克", 900);
+    });
+
+    btnFxMBlur.addEventListener("click", ()=>{
+      if (!selected) return;
+      editMode = "mblur";
+      showHint("M-Blur brush：拖动涂抹局部模糊", 900);
     });
     
     document.getElementById("btnFxSide").addEventListener("click", ()=>{
