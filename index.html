@@ -578,8 +578,6 @@
 async function initModel(){
   try{
     loader.innerText = "准备加载 MediaPipe…";
-
-    // ===== 动态 import（双 CDN 兜底）=====
     // ✅ 改为本地同源 import（iPad Safari 不会 CORS 挡）
     // 你仓库里有 vendor/vision_bundle.mjs
     loader.innerText = "加载 vision_bundle（local ./vendor/vision_bundle.mjs）…";
@@ -593,19 +591,17 @@ async function initModel(){
       loader.innerText = "vision_bundle 本地加载失败：\n" + (e?.message || String(e));
       return;
     }
-
-
-
     InteractiveSegmenter = mod.InteractiveSegmenter;
     FilesetResolver = mod.FilesetResolver;
 
     // ===== 加载 WASM（用你仓库根目录里的 4 个文件）=====
     loader.innerText = "正在下载 WASM（local ./）…";
 
-    const vision = await FilesetResolver.forVisionTasks("./");
-
-    console.log("WASM base path =", new URL("./", location.href).href);
-    console.log("Try fetch wasm:", await fetch("./vision_wasm_internal.wasm").then(r=>({ok:r.ok, status:r.status, type:r.type})).catch(err=>String(err)));
+    const vision = await FilesetResolver.forVisionTasks("./vendor/");
+    // （可选）自检：看 wasm 是否 200
+    console.log("Try fetch wasm:", await fetch("./vendor/vision_wasm_internal.wasm")
+      .then(r=>({ok:r.ok, status:r.status, type:r.type}))
+      .catch(err=>String(err)));
 
 
     // ===== 加载模型 =====
