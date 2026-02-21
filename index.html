@@ -311,6 +311,8 @@
 
     <button id="btnGravity" class="primary">Gravity OFF</button>
 
+
+
   </div>
 
   <div id="stage">
@@ -371,7 +373,6 @@
     <button id="btnFxBlur" class="primary">Blur</button>
     <button id="btnFxBW" class="primary">B&W</button>
     <button id="btnFxNoise" class="primary">Noise</button>
-    <button id="btnFx3D" class="primary">3D</button>
     <button id="btnDone" class="danger">done</button>
     </div>
   </div>
@@ -441,9 +442,6 @@
     let editMode = "stretch";
     let paintUndoStack = [];
     let objUndoStack = [];
-
-    let extrudePickMode = false;  // 点了3D后，下一次拖拽用于确定方向
-    let extrudePickStart = null;  // {x,y}
 
     let InteractiveSegmenter = null;
     let FilesetResolver = null;
@@ -1006,331 +1004,28 @@ function applyBlackWhite(){
   ctx.putImageData(img, 0,0);
 }
 
-    // amount: 0~1，建议 0.1~0.35
-    function applyNoise(amount){
-      if (!selected) return;
-      if (!pushUndoForSelected()) return;
+// amount: 0~1，建议 0.1~0.35
+function applyNoise(amount){
+  if (!selected) return;
+  if (!pushUndoForSelected()) return;
 
-      const c = selected.el;
-      const ctx = c.getContext("2d", { willReadFrequently: true });
-      const img = ctx.getImageData(0,0,c.width,c.height);
-      const d = img.data;
+  const c = selected.el;
+  const ctx = c.getContext("2d", { willReadFrequently: true });
+  const img = ctx.getImageData(0,0,c.width,c.height);
+  const d = img.data;
 
-      const amp = Math.max(0, Math.min(1, amount)) * 255;
+  const amp = Math.max(0, Math.min(1, amount)) * 255;
 
-      for (let i=0; i<d.length; i+=4){
-        const a = d[i+3];
-        if (a === 0) continue;
-        const n = (Math.random()*2 - 1) * amp;
-        d[i]   = clamp(d[i]   + n, 0, 255);
-        d[i+1] = clamp(d[i+1] + n, 0, 255);
-        d[i+2] = clamp(d[i+2] + n, 0, 255);
-      }
-      ctx.putImageData(img, 0,0);
-    }
-
-    // =========================
-    // 3D Extrude: 拉伸外圈像素做“立体块”效果（在 selected sticker 上直接改图）
-    // - depthCss: 外扩厚度（CSS px）
-    // - borderCss: 采样边缘厚度（CSS px）
-    // - shade: 阴影强度 0~1
-    // =========================
-    function apply3DExtrude(depthCss=36, borderCss=6, shade=0.55){
-      if (!selected) return;
-      if (!pushUndoForSelected()) return;
-
-      const el = selected.el;
-
-      // 原始像素尺寸
-      const oldW = el.width;
-      const oldH = el.height;
-
-      // 当前 sticker 的 CSS 尺寸（你创建时保存了 w/h）
-      const oldCssW = selected.w;
-      const oldCssH = selected.h;
-
-      // dpr（canvas像素 / css像素）
-      const dpr = oldW / Math.max(1, oldCssW);
-
-      const depthPx  = Math.max(1, Math.round(depthCss  * dpr));
-      const borderPx = Math.max(1, Math.round(borderCss * dpr));
-
-      // 备份原图到临时 canvas
-      const src = document.createElement("canvas");
-      src.width = oldW;
-      src.height = oldH;
-      src.getContext("2d").drawImage(el, 0, 0);
-
-      // 新画布：四周扩大 depth
-      const newW = oldW + depthPx*2;
-      const newH = oldH + depthPx*2;
-
-      el.width  = newW;
-      el.height = newH;
-
-      // CSS 位置/尺寸也要同步扩大（保持中心不变）
-      selected.x -= depthCss;
-      selected.y -= depthCss;
-      selected.w += depthCss*2;
-      selected.h += depthCss*2;
-
-      el.style.left = selected.x + "px";
-      el.style.top  = selected.y + "px";
-      el.style.width  = selected.w + "px";
-      el.style.height = selected.h + "px";
-
-      const ctx = el.getContext("2d");
-      ctx.clearRect(0,0,newW,newH);
-      ctx.imageSmoothingEnabled = true;
-
-      // 先把原图画到中心
-      ctx.drawImage(src, depthPx, depthPx);
-
-      // 为了性能：不用“每 1px”外扩，改成分段 step
-      const steps = Math.min(80, Math.max(12, Math.round(depthCss * 1.2)));
-      for (let s=1; s<=steps; s++){
-        const i = Math.round((s/steps) * depthPx);
-
-        // 上边：取 src 顶部 borderPx 高度，拉伸到更宽，向上铺
-        ctx.drawImage(
-          src,
-          0, 0, oldW, borderPx,
-          depthPx - i, depthPx - i,
-          oldW + i*2, borderPx
-        );
-
-        // 下边
-        ctx.drawImage(
-          src,
-          0, oldH - borderPx, oldW, borderPx,
-          depthPx - i, depthPx + oldH + (i - borderPx),
-          oldW + i*2, borderPx
-        );
-
-        // 左边
-        ctx.drawImage(
-          src,
-          0, 0, borderPx, oldH,
-          depthPx - i, depthPx - i,
-          borderPx, oldH + i*2
-        );
-
-        // 右边
-        ctx.drawImage(
-          src,
-          oldW - borderPx, 0, borderPx, oldH,
-          depthPx + oldW + (i - borderPx), depthPx - i,
-          borderPx, oldH + i*2
-        );
-
-        // 四个角（用角块填一下更像“实体”）
-        ctx.drawImage(src, 0, 0, borderPx, borderPx,
-          depthPx - i, depthPx - i, borderPx, borderPx);
-        ctx.drawImage(src, oldW - borderPx, 0, borderPx, borderPx,
-          depthPx + oldW + (i - borderPx), depthPx - i, borderPx, borderPx);
-        ctx.drawImage(src, 0, oldH - borderPx, borderPx, borderPx,
-          depthPx - i, depthPx + oldH + (i - borderPx), borderPx, borderPx);
-        ctx.drawImage(src, oldW - borderPx, oldH - borderPx, borderPx, borderPx,
-          depthPx + oldW + (i - borderPx), depthPx + oldH + (i - borderPx), borderPx, borderPx);
-      }
-
-      // ---- 加一点“侧面阴影”让它更 3D ----
-      // 我们只给“外扩区域”上色：用 clip 把中间原图扣掉
-      ctx.save();
-      ctx.beginPath();
-      ctx.rect(0,0,newW,newH);
-      ctx.rect(depthPx, depthPx, oldW, oldH); // 反向扣掉中心
-      ctx.clip("evenodd");
-
-      // 左侧更暗
-      const gL = ctx.createLinearGradient(0,0, depthPx,0);
-      gL.addColorStop(0, `rgba(0,0,0,${0.55*shade})`);
-      gL.addColorStop(1, `rgba(0,0,0,0)`);
-      ctx.fillStyle = gL;
-      ctx.fillRect(0,0, depthPx, newH);
-
-      // 下侧更暗一点
-      const gB = ctx.createLinearGradient(0,newH-depthPx, 0,newH);
-      gB.addColorStop(0, `rgba(0,0,0,0)`);
-      gB.addColorStop(1, `rgba(0,0,0,${0.65*shade})`);
-      ctx.fillStyle = gB;
-      ctx.fillRect(0, newH-depthPx, newW, depthPx);
-
-      // 上侧略亮（像受光）
-      const gT = ctx.createLinearGradient(0,0,0, depthPx);
-      gT.addColorStop(0, `rgba(255,255,255,${0.22*shade})`);
-      gT.addColorStop(1, `rgba(255,255,255,0)`);
-      ctx.fillStyle = gT;
-      ctx.fillRect(0,0, newW, depthPx);
-
-      ctx.restore();
-
-      // 让变形/旋转保持一致
-      applyTransform(selected);
-
-      showHint(`3D extrude: depth ${depthCss}px, border ${borderCss}px`, 900);
-    }
-
-    function apply3DExtrudeVec(dirX, dirY, depthCss=60, borderCss=6, shade=0.55){
-      if (!selected) return;
-      if (!pushUndoForSelected()) return;
-
-      const el = selected.el;
-
-      const oldW = el.width;
-      const oldH = el.height;
-      const oldCssW = selected.w;
-      const dpr = oldW / Math.max(1, oldCssW);
-
-      const depthPx  = Math.max(1, Math.round(depthCss  * dpr));
-      const borderPx = Math.max(1, Math.round(borderCss * dpr));
-
-      // 只在“挤出方向”需要的那一侧加 padding（避免四周都变大）
-      const padL = Math.max(0, Math.ceil(-dirX * depthPx));
-      const padR = Math.max(0, Math.ceil( dirX * depthPx));
-      const padT = Math.max(0, Math.ceil(-dirY * depthPx));
-      const padB = Math.max(0, Math.ceil( dirY * depthPx));
-
-      // 备份原图
-      const src = document.createElement("canvas");
-      src.width = oldW;
-      src.height = oldH;
-      src.getContext("2d").drawImage(el, 0, 0);
-
-      // 生成边缘 mask（只取一圈像素）
-      const edgeMask = makeEdgeMask(src, borderPx);
-
-      const newW = oldW + padL + padR;
-      const newH = oldH + padT + padB;
-
-      // 改 sticker canvas 像素尺寸
-      el.width = newW;
-      el.height = newH;
-
-      // 同步 CSS 位置/尺寸：只往需要的方向扩张（保持“原图位置”不乱跳）
-      const addCssL = padL / dpr;
-      const addCssT = padT / dpr;
-      const addCssR = padR / dpr;
-      const addCssB = padB / dpr;
-
-      selected.x -= addCssL;
-      selected.y -= addCssT;
-      selected.w += (addCssL + addCssR);
-      selected.h += (addCssT + addCssB);
-
-      el.style.left = selected.x + "px";
-      el.style.top  = selected.y + "px";
-      el.style.width  = selected.w + "px";
-      el.style.height = selected.h + "px";
-
-      const ctx = el.getContext("2d");
-      ctx.clearRect(0,0,newW,newH);
-      ctx.imageSmoothingEnabled = true;
-
-      // 把“原图”画在基准位置
-      const baseX = padL;
-      const baseY = padT;
-
-      // 挤出层数（不必每像素一步，省性能）
-      const steps = Math.min(90, Math.max(16, Math.round(depthCss * 1.25)));
-
-      // 先画“侧面”（从远到近）
-      for (let s = steps; s >= 1; s--){
-        const t = s / steps;               // 1..0
-        const i = Math.round(t * depthPx); // 远->近 的像素偏移
-
-        const offX = baseX + dirX * i;
-        const offY = baseY + dirY * i;
-
-        // 临时层：src + edgeMask
-        const tmp = document.createElement("canvas");
-        tmp.width = oldW; tmp.height = oldH;
-        const tctx = tmp.getContext("2d");
-        tctx.drawImage(src, 0, 0);
-        tctx.globalCompositeOperation = "destination-in";
-        tctx.drawImage(edgeMask, 0, 0);
-        tctx.globalCompositeOperation = "source-over";
-
-        // 越远越暗/越透明（更像“侧面”）
-        const k = 1 - t; // 0..1
-        ctx.globalAlpha = (0.18 + 0.82 * k) * shade;
-        ctx.drawImage(tmp, offX, offY);
-
-        // 叠一层暗化
-        ctx.globalCompositeOperation = "source-atop";
-        ctx.globalAlpha = (0.10 + 0.55 * k) * shade;
-        ctx.fillStyle = "black";
-        ctx.fillRect(offX, offY, oldW, oldH);
-        ctx.globalCompositeOperation = "source-over";
-      }
-
-      // 最后画正面
-      ctx.globalAlpha = 1;
-      ctx.drawImage(src, baseX, baseY);
-
-      applyTransform(selected);
-      showHint("3D extrude ✓", 800);
-    }
-
-    function makeEdgeMask(canvas, borderPx){
-      const w = canvas.width, h = canvas.height;
-      const ctx = canvas.getContext("2d", { willReadFrequently: true });
-      const img = ctx.getImageData(0,0,w,h);
-      const d = img.data;
-
-      const edge = new Uint8ClampedArray(w*h);
-
-      const alphaAt = (x,y)=>{
-        if (x<0||y<0||x>=w||y>=h) return 0;
-        return d[(y*w+x)*4+3];
-      };
-
-      // 先找“alpha 边界像素”
-      for (let y=0; y<h; y++){
-        for (let x=0; x<w; x++){
-          const a = alphaAt(x,y);
-          if (a === 0) continue;
-          let nearEmpty = false;
-          for (let oy=-1; oy<=1 && !nearEmpty; oy++){
-            for (let ox=-1; ox<=1; ox++){
-              if (!ox && !oy) continue;
-              if (alphaAt(x+ox, y+oy) === 0){ nearEmpty = true; break; }
-            }
-          }
-          if (nearEmpty) edge[y*w+x] = 255;
-        }
-      }
-
-      // 膨胀成 borderPx 厚度（用 4 邻域，快）
-      let cur = edge;
-      const times = Math.max(1, Math.min(32, borderPx)); // 防止过大卡
-      for (let t=0; t<times-1; t++){
-        const nxt = new Uint8ClampedArray(w*h);
-        for (let y=0; y<h; y++){
-          for (let x=0; x<w; x++){
-            const i = y*w+x;
-            if (cur[i]) { nxt[i]=255; continue; }
-            if ((x>0 && cur[i-1]) || (x<w-1 && cur[i+1]) ||
-                (y>0 && cur[i-w]) || (y<h-1 && cur[i+w])) {
-              nxt[i]=255;
-            }
-          }
-        }
-        cur = nxt;
-      }
-
-      const mask = document.createElement("canvas");
-      mask.width = w; mask.height = h;
-      const mctx = mask.getContext("2d");
-      const mimg = mctx.createImageData(w,h);
-      const md = mimg.data;
-
-      for (let i=0; i<w*h; i++){
-        md[i*4+3] = cur[i];
-      }
-      mctx.putImageData(mimg, 0,0);
-      return mask;
-    }
+  for (let i=0; i<d.length; i+=4){
+    const a = d[i+3];
+    if (a === 0) continue;
+    const n = (Math.random()*2 - 1) * amp;
+    d[i]   = clamp(d[i]   + n, 0, 255);
+    d[i+1] = clamp(d[i+1] + n, 0, 255);
+    d[i+2] = clamp(d[i+2] + n, 0, 255);
+  }
+  ctx.putImageData(img, 0,0);
+}
 
 
     stage.addEventListener("touchstart", (e)=>{
@@ -1387,19 +1082,10 @@ function applyBlackWhite(){
 
       if (e.target.closest(".sticker")) return;
 
-      if (editbar.style.display === "flex" && !extrudePickMode) {
-        //（你也可以选择不自动关闭 Edit，我先保留你的行为）
+      if (editbar.style.display === "flex") {
         editbar.style.display = "none";
         paintUndoStack = [];
         showHint("exit Edit", 800);
-        return;
-      }
-
-      // ✅ 3D：点了3D后，下一次拖拽用于取方向（任意角度）
-      if (extrudePickMode){
-        extrudePickStart = { x: e.clientX, y: e.clientY };
-        e.preventDefault();
-        // 不让它进入 mp tap / rect draw 等逻辑
         return;
       }
 
@@ -1455,32 +1141,6 @@ function applyBlackWhite(){
     }, { passive:false });
 
     stage.addEventListener("pointerup", async (e)=>{
-
-        // ✅ 3D：如果正在取方向，则松手立刻挤出
-      if (extrudePickMode && extrudePickStart && selected){
-        const dx = e.clientX - extrudePickStart.x;
-        const dy = e.clientY - extrudePickStart.y;
-        const len = Math.hypot(dx, dy);
-
-        extrudePickMode = false;
-        extrudePickStart = null;
-
-        if (len < 8){
-          showHint("拖拽太短，方向不明显", 900);
-          return;
-        }
-
-        const dirX = dx / len;
-        const dirY = dy / len;
-
-        const depth  = clamp(parseInt(radiusEl.value, 10) || 60, 8, 220);
-        const border = clamp(Math.round(Math.abs(parseInt(strengthEl.value, 10) || 60) / 12), 2, 18);
-        const shade  = clamp(Math.abs(parseInt(strengthEl.value, 10) || 60) / 100, 0.15, 0.95);
-
-        apply3DExtrudeVec(dirX, dirY, depth, border, shade);
-        return;
-      }
-
       // ✅ MP：pointerup 做 tap 判定 -> 触发分割
       if (captureMode === "mp"){
         if (stageTap.down && e.pointerId === stageTap.id){
@@ -2039,14 +1699,6 @@ btnGravity.addEventListener("click", async ()=>{
     const amt = Math.abs(parseInt(strengthEl.value, 10)) / 100; // 0~1
     applyNoise(clamp(amt * 0.35, 0.05, 0.45));
     showHint("Noise", 650);
-    });
-
-    document.getElementById("btnFx3D").addEventListener("click", ()=>{
-      if (!selected) return;
-
-      extrudePickMode = true;
-      extrudePickStart = null;
-      showHint("拖一下决定挤出方向（松手生效）", 1200);
     });
 
     document.getElementById("btnUndoPaint").addEventListener("click", ()=>{
