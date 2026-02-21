@@ -295,6 +295,7 @@
     <button id="btnModeRect">RECT</button>
     <button id="btnModeDraw">DRAW</button>
     <button id="btnModeGrid">GRID</button>
+    <button id="btnFxSide" class="primary">Side</button>
 
     <button id="btnVidBW">V-B&W</button>
     <button id="btnVidBlur">V-Blur</button>
@@ -1004,29 +1005,122 @@ function applyBlackWhite(){
   ctx.putImageData(img, 0,0);
 }
 
-// amount: 0~1，建议 0.1~0.35
-function applyNoise(amount){
-  if (!selected) return;
-  if (!pushUndoForSelected()) return;
+    // amount: 0~1，建议 0.1~0.35
+    function applyNoise(amount){
+      if (!selected) return;
+      if (!pushUndoForSelected()) return;
 
-  const c = selected.el;
-  const ctx = c.getContext("2d", { willReadFrequently: true });
-  const img = ctx.getImageData(0,0,c.width,c.height);
-  const d = img.data;
+      const c = selected.el;
+      const ctx = c.getContext("2d", { willReadFrequently: true });
+      const img = ctx.getImageData(0,0,c.width,c.height);
+      const d = img.data;
 
-  const amp = Math.max(0, Math.min(1, amount)) * 255;
+      const amp = Math.max(0, Math.min(1, amount)) * 255;
 
-  for (let i=0; i<d.length; i+=4){
-    const a = d[i+3];
-    if (a === 0) continue;
-    const n = (Math.random()*2 - 1) * amp;
-    d[i]   = clamp(d[i]   + n, 0, 255);
-    d[i+1] = clamp(d[i+1] + n, 0, 255);
-    d[i+2] = clamp(d[i+2] + n, 0, 255);
-  }
-  ctx.putImageData(img, 0,0);
-}
+      for (let i=0; i<d.length; i+=4){
+        const a = d[i+3];
+        if (a === 0) continue;
+        const n = (Math.random()*2 - 1) * amp;
+        d[i]   = clamp(d[i]   + n, 0, 255);
+        d[i+1] = clamp(d[i+1] + n, 0, 255);
+        d[i+2] = clamp(d[i+2] + n, 0, 255);
+      }
+      ctx.putImageData(img, 0,0);
+    }
 
+    // ===== Edge -> Side Extrude =====
+
+    // 提取“边缘像素”canvas：只保留 alpha 边界的颜色
+    function buildEdgeCanvas(srcCanvas){
+      const w = srcCanvas.width, h = srcCanvas.height;
+      const sctx = srcCanvas.getContext("2d", { willReadFrequently: true });
+      const src = sctx.getImageData(0,0,w,h);
+      const sd = src.data;
+
+      const out = document.createElement("canvas");
+      out.width = w; out.height = h;
+      const octx = out.getContext("2d", { willReadFrequently: true });
+      const edge = octx.createImageData(w,h);
+      const ed = edge.data;
+
+      const A_TH = 8; // alpha 阈值：避免半透明噪点被当边缘
+
+      function alphaAt(x,y){
+        if (x<0||y<0||x>=w||y>=h) return 0;
+        return sd[(y*w + x)*4 + 3];
+      }
+
+      for (let y=0; y<h; y++){
+        for (let x=0; x<w; x++){
+          const i = (y*w + x)*4;
+          const a = sd[i+3];
+          if (a <= A_TH) continue;
+
+          // 4 邻域只要有一个是透明 => 这是边缘
+          const n0 = alphaAt(x-1,y) <= A_TH;
+          const n1 = alphaAt(x+1,y) <= A_TH;
+          const n2 = alphaAt(x,y-1) <= A_TH;
+          const n3 = alphaAt(x,y+1) <= A_TH;
+
+          if (n0 || n1 || n2 || n3){
+            ed[i]   = sd[i];
+            ed[i+1] = sd[i+1];
+            ed[i+2] = sd[i+2];
+            ed[i+3] = a; // 保留原 alpha
+          }
+        }
+      }
+
+      octx.putImageData(edge, 0,0);
+      return out;
+    }
+
+    // 侧面“颜色传播”：用边缘像素沿方向平移叠加 thickness 次
+    // dx,dy：方向（单位像素）；比如 1,1 = 右下挤出
+    function applySideExtrude(thickness=18, dx=1, dy=1, darken=0.35){
+      if (!selected) return;
+      if (!pushUndoForSelected()) return;
+
+      const c = selected.el;
+      const w = c.width, h = c.height;
+
+      const edgeCanvas = buildEdgeCanvas(c);
+
+      // 先把原图存一份
+      const base = document.createElement("canvas");
+      base.width = w; base.height = h;
+      base.getContext("2d").drawImage(c, 0, 0);
+
+      const ctx = c.getContext("2d");
+      ctx.clearRect(0,0,w,h);
+
+      // 1) 画侧面（从远到近更像厚度）
+      //    越远越暗一点：用 globalAlpha + 叠黑
+      for (let i = thickness; i >= 1; i--){
+        const ox = i * dx;
+        const oy = i * dy;
+
+        // 画边缘扩散层
+        ctx.save();
+        const t = i / thickness; // 1..0
+        ctx.globalAlpha = 1.0;
+
+        ctx.drawImage(edgeCanvas, ox, oy);
+
+        // 轻微加暗（像侧面阴影）
+        // 用 source-atop 只影响刚画出来的像素
+        if (darken > 0){
+          ctx.globalCompositeOperation = "source-atop";
+          ctx.fillStyle = `rgba(0,0,0,${darken * (0.15 + 0.85*t)})`;
+          ctx.fillRect(ox, oy, w, h);
+          ctx.globalCompositeOperation = "source-over";
+        }
+        ctx.restore();
+      }
+
+      // 2) 把原图盖回去（正面）
+      ctx.drawImage(base, 0, 0);
+    }
 
     stage.addEventListener("touchstart", (e)=>{
       if (!selected) return;
@@ -1700,6 +1794,19 @@ btnGravity.addEventListener("click", async ()=>{
     applyNoise(clamp(amt * 0.35, 0.05, 0.45));
     showHint("Noise", 650);
     });
+
+    document.getElementById("btnFxSide").addEventListener("click", ()=>{
+  if (!selected) return;
+
+    // 你可以先写死一个方向：右下挤出
+    // thickness 可以用 radius 滑块复用
+    const thickness = clamp(Math.round(parseInt(radiusEl.value, 10) / 10), 2, 40);
+
+    // 方向：想更“侧面”一点可以用 (1, 2) 或 (2, 3)
+    applySideExtrude(thickness, 1, 2, 0.38);
+
+    showHint(`Side ${thickness}px`, 650);
+  });
 
     document.getElementById("btnUndoPaint").addEventListener("click", ()=>{
       if (!selected || paintUndoStack.length === 0) return;
