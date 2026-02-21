@@ -1252,7 +1252,7 @@ function applySideExtrude(thickness=18, dx=1, dy=1, darken=0.35, isPreview=false
 
     if (darken > 0){
       ctx.globalCompositeOperation = "source-atop";
-      ctx.fillStyle = `rgba(0,0,0,${darken * (0.06 + 0.18*t)})`;
+      ctx.fillStyle = `rgba(0,0,0,${darken * (0.10 + 0.10*t)})`;
       ctx.fillRect(ox, oy, w, h);
     }
 
@@ -2066,7 +2066,7 @@ function previewSide(){
   const dx = Math.cos(ang);
   const dy = Math.sin(ang);
 
-  applySideExtrude(thickness, dx, dy, 0.30, true);
+  applySideExtrude(thickness, dx, dy, 0.15, true);
 }
 
 sideLenEl.addEventListener("input", ()=>{
