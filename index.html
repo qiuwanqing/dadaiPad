@@ -214,7 +214,22 @@
       background: linear-gradient(to top, rgba(0,0,0,.92), rgba(0,0,0,0));
       pointer-events:none;
     }
-#gridbar *{ pointer-events:auto; }
+    #gridbar *{ pointer-events:auto; }
+
+    #sidebar{
+      position: fixed;
+      left:0; right:0; bottom:0;
+      z-index: 10000;
+      padding: 10px 10px calc(10px + env(safe-area-inset-bottom));
+      display:none;
+      gap:8px;
+      flex-wrap:wrap;
+      align-items:center;
+      justify-content:center;
+      background: linear-gradient(to top, rgba(0,0,0,.92), rgba(0,0,0,0));
+      pointer-events:none;
+    }
+    #sidebar *{ pointer-events:auto; }
 
 #gridbar button{
   padding:8px 10px;
@@ -345,6 +360,24 @@
   </div>
 </div>
 
+<div id="sidebar">
+  <div class="seg">
+    <span class="pill">
+      length
+      <input id="sideLen" type="range" min="2" max="60" value="18" />
+      <span id="sideLenVal">18</span>
+    </span>
+
+    <span class="pill">
+      direction
+      <input id="sideAng" type="range" min="0" max="360" value="63" />
+      <span id="sideAngVal">63°</span>
+    </span>
+
+    <button id="btnSideCancel">cancel</button>
+    <button id="btnSideApply" class="primary">apply</button>
+  </div>
+</div>
     
     <div id="libPanel">
       <div class="row">
@@ -404,6 +437,13 @@
     const gridbar = document.getElementById("gridbar");
     const gridRowsEl = document.getElementById("gridRows");
     const gridColsEl = document.getElementById("gridCols");
+
+    const sidebar = document.getElementById("sidebar");
+    const sideLenEl = document.getElementById("sideLen");
+    const sideAngEl = document.getElementById("sideAng");
+    const sideLenVal = document.getElementById("sideLenVal");
+    const sideAngVal = document.getElementById("sideAngVal");
+
     const gridRowsVal = document.getElementById("gridRowsVal");
     const gridColsVal = document.getElementById("gridColsVal");
     
@@ -1128,6 +1168,38 @@ function applyBlackWhite(){
       return out;
     }
 
+    function getEdgeAverageColor(srcCanvas){
+      const edge = buildEdgeCanvas(srcCanvas);
+      const ctx = edge.getContext("2d", { willReadFrequently:true });
+      const img = ctx.getImageData(0,0,edge.width,edge.height).data;
+
+      let r=0,g=0,b=0, wsum=0;
+      for (let i=0; i<img.length; i+=4){
+        const a = img[i+3];
+        if (a === 0) continue;
+        const w = a / 255;
+        r += img[i] * w;
+        g += img[i+1] * w;
+        b += img[i+2] * w;
+        wsum += w;
+      }
+      if (!wsum) return { r:180, g:180, b:180 }; // fallback
+      return { r: (r/wsum)|0, g:(g/wsum)|0, b:(b/wsum)|0 };
+    }
+
+    function snapshotStickerBase(st){
+      const c = st.el;
+      const ctx = c.getContext("2d");
+      st._sideBase = ctx.getImageData(0,0,c.width,c.height);
+    }
+
+    function restoreStickerBase(st){
+      if (!st?._sideBase) return;
+      const c = st.el;
+      const ctx = c.getContext("2d");
+      ctx.putImageData(st._sideBase, 0, 0);
+    }
+
 function applySideExtrude(thickness=18, dx=1, dy=1, darken=0.35){
   if (!selected) return;
   if (!pushUndoForSelected()) return;
@@ -1143,6 +1215,8 @@ function applySideExtrude(thickness=18, dx=1, dy=1, darken=0.35){
   const base = document.createElement("canvas");
   base.width = w; base.height = h;
   base.getContext("2d").drawImage(c, 0, 0);
+
+  const edgeCol = getEdgeAverageColor(base);
 
   const ctx = c.getContext("2d");
   ctx.clearRect(0,0,w,h);
@@ -1160,11 +1234,18 @@ function applySideExtrude(thickness=18, dx=1, dy=1, darken=0.35){
     ctx.globalCompositeOperation = "destination-out";
     ctx.drawImage(base, 0, 0);
 
-    // ✅ 轻微加暗（越远越暗）
+    // ✅ 侧面染色 + 温和暗化（不再黑得像炭）
+    const t = i / thickness;
+
+    // 1) 先用边缘平均色轻轻“染一下”
+    ctx.globalCompositeOperation = "source-atop";
+    ctx.fillStyle = `rgba(${edgeCol.r},${edgeCol.g},${edgeCol.b},${0.10 + 0.20*t})`;
+    ctx.fillRect(ox, oy, w, h);
+
+    // 2) 再非常轻地压暗一点点（让它有层次但不黑）
     if (darken > 0){
-      const t = i / thickness;
       ctx.globalCompositeOperation = "source-atop";
-      ctx.fillStyle = `rgba(0,0,0,${darken * (0.15 + 0.85*t)})`;
+      ctx.fillStyle = `rgba(0,0,0,${darken * (0.06 + 0.18*t)})`;
       ctx.fillRect(ox, oy, w, h);
     }
 
@@ -1852,19 +1933,22 @@ btnGravity.addEventListener("click", async ()=>{
     applyNoise(clamp(amt * 0.35, 0.05, 0.45));
     showHint("Noise", 650);
     });
-
+    
     document.getElementById("btnFxSide").addEventListener("click", ()=>{
-  if (!selected) return;
+      if (!selected) return;
 
-    // 你可以先写死一个方向：右下挤出
-    // thickness 可以用 radius 滑块复用
-    const thickness = clamp(Math.round(parseInt(radiusEl.value, 10) / 10), 2, 40);
+      const on = (sidebar.style.display !== "flex");
+      sidebar.style.display = on ? "flex" : "none";
 
-    // 方向：想更“侧面”一点可以用 (1, 2) 或 (2, 3)
-    applySideExtrude(thickness, 1, 2, 0.38);
-
-    showHint(`Side ${thickness}px`, 650);
-  });
+      if (on){
+        selected._sideBase = null;
+        snapshotStickerBase(selected);
+        previewSide();
+        showHint("Side controls", 700);
+      }else{
+        showHint("Side panel closed", 600);
+      }
+    });
 
     document.getElementById("btnUndoPaint").addEventListener("click", ()=>{
       if (!selected || paintUndoStack.length === 0) return;
@@ -1872,6 +1956,19 @@ btnGravity.addEventListener("click", async ()=>{
       const ctx = selected.el.getContext("2d");
       ctx.putImageData(prev, 0, 0);
       showHint("undo", 650);
+    });
+
+    document.getElementById("btnSideCancel").addEventListener("click", ()=>{
+      if (selected) restoreStickerBase(selected);
+      sidebar.style.display = "none";
+      showHint("cancel", 600);
+    });
+
+    document.getElementById("btnSideApply").addEventListener("click", ()=>{
+      if (!selected) return;
+      selected._sideBase = null;
+      sidebar.style.display = "none";
+      showHint("applied", 700);
     });
 
     document.getElementById("btnDone").addEventListener("click", ()=>{
@@ -1941,6 +2038,37 @@ document.getElementById("btnGridDone").addEventListener("click", async ()=>{
   pendingGridRect = null;
   hideROI();
 });
+
+function syncSideVals(){
+  sideLenVal.textContent = String(sideLenEl.value);
+  sideAngVal.textContent = String(sideAngEl.value) + "°";
+}
+
+function previewSide(){
+  if (!selected) return;
+
+  if (!selected._sideBase) snapshotStickerBase(selected);
+  restoreStickerBase(selected);
+
+  const thickness = parseInt(sideLenEl.value, 10) || 18;
+  const ang = (parseInt(sideAngEl.value, 10) || 0) * Math.PI / 180;
+
+  const dx = Math.cos(ang);
+  const dy = Math.sin(ang);
+
+  applySideExtrude(thickness, dx, dy, 0.16);
+}
+
+sideLenEl.addEventListener("input", ()=>{
+  syncSideVals();
+  previewSide();
+});
+sideAngEl.addEventListener("input", ()=>{
+  syncSideVals();
+  previewSide();
+});
+
+syncSideVals();
 
 function shuffleGridGroup(group){
   if (!group?.pieces?.length) return;
