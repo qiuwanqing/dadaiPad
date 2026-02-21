@@ -164,7 +164,6 @@
       mix-blend-mode: screen; /* 可选：更亮一点 */
     }
 
-
     #drawLayer{
       position:absolute; inset:0;
       z-index: 8;
@@ -323,14 +322,15 @@
     <button id="btnFxMosaic" class="primary">Mosaic</button>
 
     <button id="btnModeMagnet">MAGNET</button>
-    <button id="btnMagnetShape">Circle</button>
+    <button id="btnMagnetShape" class="primary">LOOP</button>
+    <button id="btnMagnetBind"  class="primary">IN</button>
+    <button id="btnMagnetClear">Field Clear</button>
 
     <button id="btnFxMBlur" class="primary">M-Blur</button>
 
     <button id="btnVidBW">V-B&W</button>
     <button id="btnVidBlur">V-Blur</button>
     <input id="vidBlur" type="range" min="0" max="18" value="0" style="width:110px;">
-
 
     <button id="btnSave" class="disabled">Save</button>
     <button id="btnEdit" class="primary disabled">Edit</button>
@@ -342,8 +342,6 @@
 
     <button id="btnGravity" class="primary">Gravity OFF</button>
     <button id="btnShuffleMode" class="primary">Shuffle OFF</button>
-
-
 
   </div>
 
@@ -471,14 +469,22 @@
     let gridGroups = [];
     let gridGroupSeq = 1;
 
-    // ===== Magnet / Attractor =====
-    let magnetShape = "circle";      // "circle" | "line"
-    let magnetDown = false;
-    let magnetStart = null;
-    let magnetEnd = null;
+    // ===== MAGNET v2: Shape Field (LOOP / PATH) + Dock binding =====
+    let field = null;
+    /*
+    field = {
+      kind: "loop" | "path",
+      bind: "in" | "out" | "on",   // loop 用 in/out；path 用 on
+      pts: [ {x,y}, ... ],         // 手绘点（stage 坐标）
+      docks: new Map(),            // sticker -> {x,y}
+      strength: 980,
+      swirl: 2.4,
+      damping: 0.86
+    };
+    */
 
-    // 吸附场（松手后生效）
-    let attractor = null;
+    let fieldDrawing = false;
+    let fieldPts = []; // 正在画的点（松手后写入 field.pts）
 
     // 预览 canvas（画圈/画线）
     const magnetPreview = document.createElement("canvas");
@@ -659,6 +665,129 @@ setVh();
 
     function clamp(v,a,b){ return Math.max(a, Math.min(b,v)); }
 
+    // ===== Field helpers =====
+function pointInPoly(x, y, pts){
+  // ray casting
+  let inside = false;
+  for (let i=0, j=pts.length-1; i<pts.length; j=i++){
+    const xi=pts[i].x, yi=pts[i].y;
+    const xj=pts[j].x, yj=pts[j].y;
+    const intersect = ((yi>y) !== (yj>y)) && (x < (xj-xi)*(y-yi)/(yj-yi+1e-9) + xi);
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
+function clearFieldOverlay(){
+  clearMagnetPreview(); // ✅ 你已有的函数，清 magnetPreview
+}
+
+function drawFieldOverlay(pts, kind, bindText){
+  // 画在 magnetPreview 上（持久显示场）
+  clearMagnetPreview();
+  if (!pts || pts.length < 2) return;
+
+  mctx.save();
+  mctx.lineWidth = 2;
+  mctx.lineCap = "round";
+  mctx.lineJoin = "round";
+
+  // 主描边
+  mctx.strokeStyle = "rgba(120,200,255,.78)";
+  // loop 填充
+  mctx.fillStyle   = "rgba(120,200,255,.12)";
+
+  mctx.beginPath();
+  mctx.moveTo(pts[0].x, pts[0].y);
+  for (let i=1; i<pts.length; i++) mctx.lineTo(pts[i].x, pts[i].y);
+
+  if (kind === "loop"){
+    mctx.closePath();
+    mctx.fill();
+  }
+  mctx.stroke();
+
+  // 角标文字
+  mctx.fillStyle = "rgba(255,255,255,.78)";
+  mctx.font = "12px system-ui";
+  mctx.fillText(`FIELD: ${bindText}`, pts[0].x + 8, pts[0].y - 8);
+
+  mctx.restore();
+}
+
+function assignDocksForField(){
+  if (!field || !stickers.length) return;
+  field.docks.clear();
+
+  const pts = field.pts;
+
+  // bbox
+  let minX=Infinity, minY=Infinity, maxX=-Infinity, maxY=-Infinity;
+  for (const p of pts){
+    minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
+    maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
+  }
+
+  // spacing（防堆叠）
+  const minDist = 30;
+  const taken = [];
+  const ok = (p)=>{
+    for (const q of taken){
+      if (Math.hypot(p.x-q.x, p.y-q.y) < minDist) return false;
+    }
+    return true;
+  };
+
+  // PATH：严格在线上（取路径上的点分配）
+  if (field.kind === "path"){
+    const candidates = pts.filter((_,i)=> i%2===0);
+    for (let i=0; i<stickers.length; i++){
+      const st = stickers[i];
+      const idx = Math.floor(i * (candidates.length-1) / Math.max(1, stickers.length-1));
+      const p = candidates[clamp(idx,0,candidates.length-1)];
+      field.docks.set(st, { x:p.x, y:p.y });
+    }
+    return;
+  }
+
+  // LOOP：IN/OUT：严格在多边形内/外
+  const PAD = 160; // OUT 的外扩范围（先做简单强绑定版，之后可升级成“贴圈外环”）
+  const bx0 = (field.bind === "out") ? (minX - PAD) : minX;
+  const by0 = (field.bind === "out") ? (minY - PAD) : minY;
+  const bx1 = (field.bind === "out") ? (maxX + PAD) : maxX;
+  const by1 = (field.bind === "out") ? (maxY + PAD) : maxY;
+
+  for (const st of stickers){
+    let found = null;
+
+    for (let k=0; k<1400; k++){
+      const x = bx0 + Math.random() * (bx1 - bx0);
+      const y = by0 + Math.random() * (by1 - by0);
+
+      const inside = pointInPoly(x,y,pts);
+      if (field.bind === "in"  && !inside) continue;
+      if (field.bind === "out" &&  inside) continue;
+
+      const cand = {x,y};
+      if (!ok(cand)) continue;
+
+      found = cand;
+      taken.push(cand);
+      break;
+    }
+
+    // fallback：避免找不到点卡死
+    if (!found){
+      found = (field.bind === "in")
+        ? { x:(minX+maxX)/2, y:(minY+maxY)/2 }
+        : { x:bx1, y:by1 };
+      taken.push(found);
+    }
+
+    field.docks.set(st, found);
+  }
+}
+
     function localPointFromClient(clientX, clientY){
       const r = stage.getBoundingClientRect();
       return { x: clientX - r.left, y: clientY - r.top, W: r.width, H: r.height };
@@ -768,6 +897,9 @@ async function initModel(){
     const btnModeMagnet = document.getElementById("btnModeMagnet");
     const btnMagnetShape = document.getElementById("btnMagnetShape");
 
+    const btnMagnetBind  = document.getElementById("btnMagnetBind");
+    const btnMagnetClear = document.getElementById("btnMagnetClear");
+
     function setCaptureMode(m){
       captureMode = m;
       btnModeMP.classList.toggle("active", m==="mp");
@@ -780,19 +912,68 @@ async function initModel(){
       if (m === "rect") showHint("RECT：按住拖拽画框，松手截取", 900);
       if (m === "draw") showHint("DRAW：按住手写路径，松手截取", 900);
       if (m === "grid") showHint("GRID：拖拽画大框 → 设行列 → done 切成碎片", 1200);
-      if (m === "magnet") showHint("MAGNET：拖出 Circle/Line，松手吸附所有 sticker", 1200);
+      if (m === "magnet") showHint("MAGNET：手绘 LOOP/PATH；LOOP 可 IN/OUT；松手后场会保留", 1300);
     }
     btnModeMP.onclick = () => setCaptureMode("mp");
     btnModeRect.onclick = () => setCaptureMode("rect");
     btnModeDraw.onclick = () => setCaptureMode("draw");
     btnModeGrid.onclick = () => setCaptureMode("grid");
 
-    btnModeMagnet.onclick = () => setCaptureMode("magnet");
+btnModeMagnet.onclick = () => setCaptureMode("magnet");
 
+    // shape: LOOP <-> PATH
     btnMagnetShape.onclick = ()=>{
-      magnetShape = (magnetShape === "circle") ? "line" : "circle";
-      btnMagnetShape.textContent = (magnetShape === "circle") ? "Circle" : "Line";
-      showHint("Magnet shape: " + btnMagnetShape.textContent, 700);
+      const now = btnMagnetShape.textContent.trim();
+      const next = (now === "LOOP") ? "PATH" : "LOOP";
+      btnMagnetShape.textContent = next;
+
+      // 切形状时，bind 文案同步
+      if (next === "LOOP"){
+        btnMagnetBind.textContent = "IN";
+      } else {
+        btnMagnetBind.textContent = "ON";
+      }
+
+      // 有场的话，切形状直接清场（避免逻辑混乱）
+      if (field){
+        field = null;
+        fieldPts = [];
+        fieldDrawing = false;
+        clearFieldOverlay();
+        showHint("Field cleared (switch shape)", 900);
+      }else{
+        showHint("Magnet shape: " + next, 700);
+      }
+    };
+
+    // bind: LOOP => IN/OUT ; PATH => ON
+    btnMagnetBind.onclick = ()=>{
+      const shape = btnMagnetShape.textContent.trim();
+      if (shape === "LOOP"){
+        const now = btnMagnetBind.textContent.trim();
+        btnMagnetBind.textContent = (now === "IN") ? "OUT" : "IN";
+        showHint("Bind: " + btnMagnetBind.textContent, 700);
+
+        // 已有 loop 场：切 IN/OUT 立刻重分配 docks
+        if (field && field.kind === "loop"){
+          field.bind = (btnMagnetBind.textContent.trim() === "OUT") ? "out" : "in";
+          assignDocksForField();
+          startGravityLoop();
+          drawFieldOverlay(field.pts, field.kind, btnMagnetBind.textContent.trim());
+        }
+      } else {
+        btnMagnetBind.textContent = "ON";
+        showHint("Bind: ON", 700);
+      }
+    };
+
+    // 清场
+    btnMagnetClear.onclick = ()=>{
+      field = null;
+      fieldPts = [];
+      fieldDrawing = false;
+      clearFieldOverlay();
+      showHint("Field cleared", 800);
     };
 
     function deselect(){
@@ -1544,13 +1725,19 @@ function applySideExtrude(thickness=18, dx=1, dy=1, darken=0.35, isPreview=false
         showHint("exit Edit", 800);
         return;
       }
-      // ---- MAGNET MODE ----
+      // ---- MAGNET MODE (v2: hand-draw) ----
       if (captureMode === "magnet"){
         e.preventDefault();
-        magnetDown = true;
-        magnetStart = localPointFromClient(e.clientX, e.clientY);
-        magnetEnd = { ...magnetStart };
-        clearMagnetPreview();
+
+        fieldDrawing = true;
+        fieldPts = [];
+
+        const p = localPointFromClient(e.clientX, e.clientY);
+        fieldPts.push({ x:p.x, y:p.y });
+
+        // 先画一个 draft
+        const kind = (btnMagnetShape.textContent.trim() === "PATH") ? "path" : "loop";
+        drawFieldOverlay(fieldPts, kind, btnMagnetBind.textContent.trim());
         return;
       }
       stageTap.down = true;
@@ -1574,17 +1761,20 @@ function applySideExtrude(thickness=18, dx=1, dy=1, darken=0.35, isPreview=false
     }, { passive:false });
 
     stage.addEventListener("pointermove", (e)=>{
-      // ---- MAGNET MODE PREVIEW ----
-      if (captureMode === "magnet" && magnetDown && magnetStart){
+      // ---- MAGNET MODE DRAW (v2) ----
+      if (captureMode === "magnet" && fieldDrawing){
         e.preventDefault();
-        const p = localPointFromClient(e.clientX, e.clientY);
-        magnetEnd = p;
 
-        if (magnetShape === "circle"){
-          drawMagnetPreviewCircle(magnetStart.x, magnetStart.y, magnetEnd.x, magnetEnd.y);
-        }else{
-          drawMagnetPreviewLine(magnetStart.x, magnetStart.y, magnetEnd.x, magnetEnd.y);
+        const p = localPointFromClient(e.clientX, e.clientY);
+        const last = fieldPts[fieldPts.length - 1];
+
+        // 采样间隔：防止点太密
+        if (!last || Math.hypot(p.x-last.x, p.y-last.y) > 3){
+          fieldPts.push({ x:p.x, y:p.y });
         }
+
+        const kind = (btnMagnetShape.textContent.trim() === "PATH") ? "path" : "loop";
+        drawFieldOverlay(fieldPts, kind, btnMagnetBind.textContent.trim());
         return;
       }
       if (!pointerDown || !startPt) return;
@@ -1633,44 +1823,60 @@ function applySideExtrude(thickness=18, dx=1, dy=1, darken=0.35, isPreview=false
         return;
       }
 
-      // ---- MAGNET MODE APPLY ----
+      // ---- MAGNET MODE APPLY (v2: create field + docks) ----
       if (captureMode === "magnet"){
-        if (!magnetDown || !magnetStart || !magnetEnd) return;
+        if (!fieldDrawing) return;
         e.preventDefault();
-        magnetDown = false;
+        fieldDrawing = false;
 
-        if (magnetShape === "circle"){
-          const r = Math.max(14, Math.hypot(magnetEnd.x - magnetStart.x, magnetEnd.y - magnetStart.y));
-          attractor = {
-            type:"circle",
-            cx: magnetStart.x, cy: magnetStart.y, r,
-            strength: 720,
-            swirl: 2.2,
-            damping: 0.90,
-            ttl: 2.6,
-            t0: performance.now()
-          };
-          showHint("吸到圈里", 700);
-        }else{
-          attractor = {
-            type:"line",
-            ax: magnetStart.x, ay: magnetStart.y,
-            bx: magnetEnd.x,   by: magnetEnd.y,
-            targetT: 1, // 吸到 B 端；想吸到 A 端就设 0
-            strength: 820,
-            swirl: 2.8,
-            damping: 0.90,
-            ttl: 2.4,
-            t0: performance.now()
-          };
-          showHint("吸到线端点", 700);
+        // 点太少：取消
+        if (fieldPts.length < 8){
+          fieldPts = [];
+          clearFieldOverlay();
+          showHint("too short", 700);
+          return;
         }
 
-        clearMagnetPreview();
-        magnetStart = null;
-        magnetEnd = null;
+        const kindText = btnMagnetShape.textContent.trim(); // LOOP / PATH
+        const kind = (kindText === "PATH") ? "path" : "loop";
 
-        startGravityLoop(); // ✅ 保证 gravity OFF 时也能动
+        // bind：LOOP -> IN/OUT；PATH -> ON
+        let bind = "on";
+        if (kind === "loop"){
+          bind = (btnMagnetBind.textContent.trim() === "OUT") ? "out" : "in";
+        } else {
+          btnMagnetBind.textContent = "ON";
+          bind = "on";
+        }
+
+        // LOOP：强制闭合（把起点补到末尾）
+        if (kind === "loop"){
+          const a = fieldPts[0], b = fieldPts[fieldPts.length - 1];
+          if (Math.hypot(a.x-b.x, a.y-b.y) > 10){
+            fieldPts.push({ x:a.x, y:a.y });
+          }
+        }
+
+        field = {
+          kind,
+          bind,
+          pts: fieldPts.slice(),
+          docks: new Map(),
+          strength: 980,
+          swirl: 2.4,
+          damping: 0.86
+        };
+
+        // ✅ 强绑定：给每个 sticker 分配 dock 点（严格 in/out/on）
+        assignDocksForField();
+
+        // ✅ 场持久显示：保留在 magnetPreview 上
+        drawFieldOverlay(field.pts, field.kind, btnMagnetBind.textContent.trim());
+
+        // ✅ 即使 Gravity OFF，也要让它动起来
+        startGravityLoop();
+
+        showHint(kind === "loop" ? ("FIELD " + btnMagnetBind.textContent.trim()) : "FIELD ON PATH", 900);
         return;
       }
 
@@ -2330,6 +2536,13 @@ btnGravity.addEventListener("click", async ()=>{
       stickers = [];
       objUndoStack = [];
       deselect();
+
+        // ✅ 同步清场
+      field = null;
+      fieldPts = [];
+      fieldDrawing = false;
+      clearFieldOverlay();
+
       showHint("已清空", 800);
     });
 
@@ -2531,62 +2744,47 @@ function gravityTick(t){
     st.vx += tiltAX * dt;
     st.vy += tiltAY * dt;
 
-    // 1.5) Attractor force（MAGNET）
-    if (attractor){
-      const now = performance.now();
-      const life = (now - attractor.t0) / 1000;
-      const alive = life <= attractor.ttl;
+// 1.5) Field force（MAGNET v2: dock binding）
+if (field){
+  const dock = field.docks.get(st);
+  if (dock){
+    const cx = st.x + (st.w * st.scale)/2;
+    const cy = st.y + (st.h * st.scale)/2;
 
-      if (!alive){
-        attractor = null;
-      }else{
-        const cx = st.x + (st.w * st.scale)/2;
-        const cy = st.y + (st.h * st.scale)/2;
+    const tx = dock.x;
+    const ty = dock.y;
 
-        let tx=cx, ty=cy;
+    const dx = tx - cx;
+    const dy = ty - cy;
+    const d  = Math.hypot(dx,dy) || 1;
 
-        if (attractor.type === "circle"){
-          const dx0 = cx - attractor.cx;
-          const dy0 = cy - attractor.cy;
-          const d0  = Math.hypot(dx0,dy0) || 1;
+    // 越近越柔
+    const pull = field.strength * (0.25 + 0.75 * clamp(d/420, 0, 1));
 
-          if (d0 <= attractor.r){
-            tx = attractor.cx; ty = attractor.cy;
-          }else{
-            tx = attractor.cx + dx0/d0 * attractor.r;
-            ty = attractor.cy + dy0/d0 * attractor.r;
-          }
-        }else{
-          tx = attractor.targetT ? attractor.bx : attractor.ax;
-          ty = attractor.targetT ? attractor.by : attractor.ay;
-        }
+    // radial accel
+    const ax = (dx/d) * pull;
+    const ay = (dy/d) * pull;
 
-        const dx = tx - cx;
-        const dy = ty - cy;
-        const d  = Math.hypot(dx,dy) || 1;
+    // swirl（切向）
+    const sx = (-dy/d) * pull * field.swirl * 0.16;
+    const sy = ( dx/d) * pull * field.swirl * 0.16;
 
-        const pull = attractor.strength * (0.35 + 0.65 * clamp(d/420, 0, 1));
+    st.vx += (ax + sx) * dt;
+    st.vy += (ay + sy) * dt;
 
-        const ax = (dx/d) * pull;
-        const ay = (dy/d) * pull;
+    // 接近 dock 时角速度变小，避免乱抖
+    st.av += clamp((sx+sy)/1200, -0.8, 0.8) * dt * clamp(d/240, 0, 1);
 
-        const sx = (-dy/d) * pull * attractor.swirl * 0.18;
-        const sy = ( dx/d) * pull * attractor.swirl * 0.18;
+    // 阻尼：更容易停住
+    st.vx *= field.damping;
+    st.vy *= field.damping;
 
-        st.vx += (ax + sx) * dt;
-        st.vy += (ay + sy) * dt;
-
-        st.av += clamp((sx+sy)/1200, -0.9, 0.9) * dt;
-
-        st.vx *= attractor.damping;
-        st.vy *= attractor.damping;
-
-        if (d < 10){
-          st.vx *= 0.6;
-          st.vy *= 0.6;
-        }
-      }
+    if (d < 12){
+      st.vx *= 0.55;
+      st.vy *= 0.55;
     }
+  }
+}
 
     // 2) 轻微旋转趋势（速度越大越容易转一点点）
     const sp = Math.hypot(st.vx, st.vy);
@@ -2662,7 +2860,7 @@ function gravityTick(t){
     }
   }
 
-    const needLoop = gravityMode || !!attractor;
+    const needLoop = gravityMode || !!field;
     if (needLoop){
       gravityRAF = requestAnimationFrame(gravityTick);
     }else{
