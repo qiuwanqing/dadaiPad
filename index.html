@@ -79,7 +79,8 @@
     #video{
       position:absolute; inset:0;
       width:100%; height:100%;
-      object-fit: cover;
+      object-fit: contain;   /* ✅ 不裁切，完整显示 */
+      background:#000;       /* ✅ 黑边 */
       transform-origin:center;
       z-index:1;
     }
@@ -612,7 +613,7 @@ setVh();
 
       try{
         stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode, width:{ideal:720}, height:{ideal:1280} },
+          video: { facingMode, width:{ideal:1920}, height:{ideal:1080} },
           audio: false
         });
 
@@ -799,15 +800,17 @@ async function initModel(){
 
       let drawW, drawH, offsetX, offsetY;
       if (stageAspect > videoAspect) {
-        drawW = sw;
-        drawH = sw / videoAspect;
-        offsetX = 0;
-        offsetY = (sh - drawH) / 2;
-      } else {
+        // ✅ stage 更宽：以高度为基准，左右留黑边
         drawH = sh;
         drawW = sh * videoAspect;
         offsetY = 0;
         offsetX = (sw - drawW) / 2;
+      } else {
+        // ✅ stage 更高：以宽度为基准，上下留黑边
+        drawW = sw;
+        drawH = sw / videoAspect;
+        offsetX = 0;
+        offsetY = (sh - drawH) / 2;
       }
 
       const isMirrored = (facingMode === "user");
@@ -1810,16 +1813,18 @@ function applySideExtrude(thickness=18, dx=1, dy=1, darken=0.35, isPreview=false
     const stageAspect = sw / sh;
 
     let drawW, drawH, offsetX, offsetY;
-    if (stageAspect > videoAspect){
-      drawW = sw;
-      drawH = sw / videoAspect;
-      offsetX = 0;
-      offsetY = (sh - drawH) / 2;
-    } else {
+    if (stageAspect > videoAspect) {
+      // ✅ stage 更宽：以高度为基准，左右留黑边
       drawH = sh;
       drawW = sh * videoAspect;
       offsetY = 0;
       offsetX = (sw - drawW) / 2;
+    } else {
+      // ✅ stage 更高：以宽度为基准，上下留黑边
+      drawW = sw;
+      drawH = sw / videoAspect;
+      offsetX = 0;
+      offsetY = (sh - drawH) / 2;
     }
 
     let nx = Number(trimmed.dataset.originX) / vw;
