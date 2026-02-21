@@ -669,9 +669,17 @@ async function initModel(){
     }
 
     function applyStickerCssFilter(st){
-    const parts = [];
-    if (st.blurPx > 0) parts.push(`blur(${st.blurPx}px)`);
-    st.el.style.filter = parts.length ? parts.join(" ") : "none";
+      const parts = [];
+
+      // 原本的 blur
+      if (st.blurPx > 0) parts.push(`blur(${st.blurPx}px)`);
+
+      // ✅ 如果挤出过，就加真实投影
+      if (st.sideOn) {
+        parts.push("drop-shadow(0 14px 26px rgba(0,0,0,.55))");
+      }
+
+      st.el.style.filter = parts.length ? parts.join(" ") : "none";
     }
 
     // iOS 稳定：先把 video 当前帧画到 canvas，再送进 MediaPipe
@@ -1028,6 +1036,51 @@ function applyBlackWhite(){
       ctx.putImageData(img, 0,0);
     }
 
+    function ensureCanvasPadding(st, padPx){
+      if (!st?.el || padPx <= 0) return;
+
+      const c = st.el;
+      const cssW = st.w;
+      const dpr = c.width / cssW;
+
+      const pad = Math.ceil(padPx * dpr);
+
+      const needW = c.width + pad * 2;
+      const needH = c.height + pad * 2;
+
+      const out = document.createElement("canvas");
+      out.className = "sticker";
+      out.width = needW;
+      out.height = needH;
+
+      out.style.left = c.style.left;
+      out.style.top  = c.style.top;
+      out.style.width  = (st.w + padPx * 2) + "px";
+      out.style.height = (st.h + padPx * 2) + "px";
+      out.style.transform = c.style.transform;
+      out.style.filter = c.style.filter;
+      out.style.borderRadius = c.style.borderRadius;
+      out.style.border = c.style.border;
+
+      const ctx = out.getContext("2d");
+      ctx.drawImage(c, pad, pad);
+
+      c.replaceWith(out);
+      st.el = out;
+
+      st.x -= padPx;
+      st.y -= padPx;
+      st.w += padPx * 2;
+      st.h += padPx * 2;
+
+      out.style.left = st.x + "px";
+      out.style.top  = st.y + "px";
+
+      attachStickerInteractions(st);
+
+      if (selected === st) out.classList.add("selected");
+    }
+
     // ===== Edge -> Side Extrude =====
 
     // 提取“边缘像素”canvas：只保留 alpha 边界的颜色
@@ -1075,52 +1128,57 @@ function applyBlackWhite(){
       return out;
     }
 
-    // 侧面“颜色传播”：用边缘像素沿方向平移叠加 thickness 次
-    // dx,dy：方向（单位像素）；比如 1,1 = 右下挤出
-    function applySideExtrude(thickness=18, dx=1, dy=1, darken=0.35){
-      if (!selected) return;
-      if (!pushUndoForSelected()) return;
+function applySideExtrude(thickness=18, dx=1, dy=1, darken=0.35){
+  if (!selected) return;
+  if (!pushUndoForSelected()) return;
 
-      const c = selected.el;
-      const w = c.width, h = c.height;
+  // ✅ 先扩容：pad 至少要覆盖挤出最大偏移
+  const padCss = Math.ceil(thickness * (Math.max(Math.abs(dx), Math.abs(dy)) + 1) + 6);
+  ensureCanvasPadding(selected, padCss);
 
-      const edgeCanvas = buildEdgeCanvas(c);
+  const c = selected.el;
+  const w = c.width, h = c.height;
 
-      // 先把原图存一份
-      const base = document.createElement("canvas");
-      base.width = w; base.height = h;
-      base.getContext("2d").drawImage(c, 0, 0);
+  // 基底（正面原图）
+  const base = document.createElement("canvas");
+  base.width = w; base.height = h;
+  base.getContext("2d").drawImage(c, 0, 0);
 
-      const ctx = c.getContext("2d");
-      ctx.clearRect(0,0,w,h);
+  const ctx = c.getContext("2d");
+  ctx.clearRect(0,0,w,h);
 
-      // 1) 画侧面（从远到近更像厚度）
-      //    越远越暗一点：用 globalAlpha + 叠黑
-      for (let i = thickness; i >= 1; i--){
-        const ox = i * dx;
-        const oy = i * dy;
+  // 侧面：用“平移整张 base 再挖掉正面区域”
+  for (let i = thickness; i >= 1; i--){
+    const ox = i * dx;
+    const oy = i * dy;
 
-        // 画边缘扩散层
-        ctx.save();
-        const t = i / thickness; // 1..0
-        ctx.globalAlpha = 1.0;
+    ctx.save();
+    ctx.globalCompositeOperation = "source-over";
+    ctx.drawImage(base, ox, oy);
 
-        ctx.drawImage(edgeCanvas, ox, oy);
+    // ✅ 挖掉正面覆盖区域（只留下外面露出来的部分）
+    ctx.globalCompositeOperation = "destination-out";
+    ctx.drawImage(base, 0, 0);
 
-        // 轻微加暗（像侧面阴影）
-        // 用 source-atop 只影响刚画出来的像素
-        if (darken > 0){
-          ctx.globalCompositeOperation = "source-atop";
-          ctx.fillStyle = `rgba(0,0,0,${darken * (0.15 + 0.85*t)})`;
-          ctx.fillRect(ox, oy, w, h);
-          ctx.globalCompositeOperation = "source-over";
-        }
-        ctx.restore();
-      }
-
-      // 2) 把原图盖回去（正面）
-      ctx.drawImage(base, 0, 0);
+    // ✅ 轻微加暗（越远越暗）
+    if (darken > 0){
+      const t = i / thickness;
+      ctx.globalCompositeOperation = "source-atop";
+      ctx.fillStyle = `rgba(0,0,0,${darken * (0.15 + 0.85*t)})`;
+      ctx.fillRect(ox, oy, w, h);
     }
+
+    ctx.restore();
+  }
+
+  // 最后盖回正面
+  ctx.globalCompositeOperation = "source-over";
+  ctx.drawImage(base, 0, 0);
+
+  // （可选）让它更像“有投影”
+  selected.sideOn = true;
+  applyStickerCssFilter(selected);
+}
 
     stage.addEventListener("touchstart", (e)=>{
       if (!selected) return;
