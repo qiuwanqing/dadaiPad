@@ -1189,24 +1189,36 @@ function applyBlackWhite(){
 
     function snapshotStickerBase(st){
       const c = st.el;
-      const ctx = c.getContext("2d");
-      st._sideBase = ctx.getImageData(0,0,c.width,c.height);
+      const base = document.createElement("canvas");
+      base.width = c.width;
+      base.height = c.height;
+      base.getContext("2d").drawImage(c, 0, 0);
+      st._sideBaseCanvas = base;          // ✅ 用 canvas 存快照
     }
 
     function restoreStickerBase(st){
-      if (!st?._sideBase) return;
+      const base = st?._sideBaseCanvas;
+      if (!base) return;
       const c = st.el;
       const ctx = c.getContext("2d");
-      ctx.putImageData(st._sideBase, 0, 0);
+      ctx.setTransform(1,0,0,1,0,0);
+      ctx.clearRect(0,0,c.width,c.height);  // ✅ 先清空，避免脏残留
+      ctx.drawImage(base, 0, 0);
     }
 
 function applySideExtrude(thickness=18, dx=1, dy=1, darken=0.35){
   if (!selected) return;
-  if (!pushUndoForSelected()) return;
 
-  // ✅ 先扩容：pad 至少要覆盖挤出最大偏移
-  const padCss = Math.ceil(thickness * (Math.max(Math.abs(dx), Math.abs(dy)) + 1) + 6);
-  ensureCanvasPadding(selected, padCss);
+  // 只有“正式 apply”才入 undo
+  if (!isPreview){
+    if (!pushUndoForSelected()) return;
+  }
+
+  // ✅ padding 只在“正式 apply”时做；preview 不要反复换 canvas
+  if (!isPreview){
+    const padCss = Math.ceil(thickness * (Math.max(Math.abs(dx), Math.abs(dy)) + 1) + 6);
+    ensureCanvasPadding(selected, padCss);
+  }
 
   const c = selected.el;
   const w = c.width, h = c.height;
@@ -1239,7 +1251,7 @@ function applySideExtrude(thickness=18, dx=1, dy=1, darken=0.35){
 
     // 1) 先用边缘平均色轻轻“染一下”
     ctx.globalCompositeOperation = "source-atop";
-    ctx.fillStyle = `rgba(${edgeCol.r},${edgeCol.g},${edgeCol.b},${0.10 + 0.20*t})`;
+    ctx.fillStyle = `rgba(${edgeCol.r},${edgeCol.g},${edgeCol.b},${0.20 + 0.30*t})`;
     ctx.fillRect(ox, oy, w, h);
 
     // 2) 再非常轻地压暗一点点（让它有层次但不黑）
@@ -1942,6 +1954,10 @@ btnGravity.addEventListener("click", async ()=>{
 
       if (on){
         selected._sideBase = null;
+
+        // 60 是你的 max，方向最大偏移就用 2 兜底
+        ensureCanvasPadding(selected, 60 * 2 + 10);
+
         snapshotStickerBase(selected);
         previewSide();
         showHint("Side controls", 700);
@@ -2047,7 +2063,7 @@ function syncSideVals(){
 function previewSide(){
   if (!selected) return;
 
-  if (!selected._sideBase) snapshotStickerBase(selected);
+  if (!selected._sideBaseCanvas) snapshotStickerBase(selected);
   restoreStickerBase(selected);
 
   const thickness = parseInt(sideLenEl.value, 10) || 18;
@@ -2056,7 +2072,7 @@ function previewSide(){
   const dx = Math.cos(ang);
   const dy = Math.sin(ang);
 
-  applySideExtrude(thickness, dx, dy, 0.16);
+  applySideExtrude(thickness, dx, dy, 0.30, true);
 }
 
 sideLenEl.addEventListener("input", ()=>{
@@ -2315,8 +2331,6 @@ startCamera = async function(){
 window.addEventListener("keydown", (e)=>{
   if (e.key.toLowerCase() === "s") shuffleAllGrids();
 });
-
-
 
     setActionEnabled(false);
     setCaptureMode("mp");
