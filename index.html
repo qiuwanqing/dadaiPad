@@ -122,6 +122,14 @@
     }
     #hint.show{ opacity:1; }
 
+    /* Magnet preview layer */
+    #magnetPreview{
+      position:absolute;
+      inset:0;
+      z-index: 34;
+      pointer-events:none;
+    }
+
     #roiBox{
       position:absolute;
       border:1px solid rgba(255,255,255,.85);
@@ -234,18 +242,16 @@
     }
     #sidebar *{ pointer-events:auto; }
 
-#gridbar button{
-  padding:8px 10px;
-  border-radius:999px;
-  border:1px solid rgba(255,255,255,.18);
-  background: rgba(255,255,255,.08);
-  color:#fff;
-  backdrop-filter: blur(10px);
-  cursor:pointer;
-}
-#gridbar button.primary{ border-color: rgba(160,210,255,.60); }
-
-
+    #gridbar button{
+      padding:8px 10px;
+      border-radius:999px;
+      border:1px solid rgba(255,255,255,.18);
+      background: rgba(255,255,255,.08);
+      color:#fff;
+      backdrop-filter: blur(10px);
+      cursor:pointer;
+    }
+    #gridbar button.primary{ border-color: rgba(160,210,255,.60); }
 
     .seg{
       display:flex; gap:8px; flex-wrap:wrap; justify-content:center; align-items:center;
@@ -315,6 +321,10 @@
     <button id="btnModeGrid">GRID</button>
     <button id="btnFxSide" class="primary">Side</button>
     <button id="btnFxMosaic" class="primary">Mosaic</button>
+
+    <button id="btnModeMagnet">MAGNET</button>
+    <button id="btnMagnetShape">Circle</button>
+
     <button id="btnFxMBlur" class="primary">M-Blur</button>
 
     <button id="btnVidBW">V-B&W</button>
@@ -461,6 +471,69 @@
     let gridGroups = [];
     let gridGroupSeq = 1;
 
+    // ===== Magnet / Attractor =====
+    let magnetShape = "circle";      // "circle" | "line"
+    let magnetDown = false;
+    let magnetStart = null;
+    let magnetEnd = null;
+
+    // 吸附场（松手后生效）
+    let attractor = null;
+
+    // 预览 canvas（画圈/画线）
+    const magnetPreview = document.createElement("canvas");
+    magnetPreview.id = "magnetPreview";
+    stage.appendChild(magnetPreview);
+    const mctx = magnetPreview.getContext("2d");
+
+    function resizeMagnetPreview(){
+      const r = stage.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      magnetPreview.width = Math.round(r.width * dpr);
+      magnetPreview.height = Math.round(r.height * dpr);
+      magnetPreview.style.width = r.width + "px";
+      magnetPreview.style.height = r.height + "px";
+      mctx.setTransform(dpr,0,0,dpr,0,0);
+    }
+    window.addEventListener("resize", resizeMagnetPreview);
+    window.visualViewport?.addEventListener("resize", resizeMagnetPreview);
+    resizeMagnetPreview();
+
+    function clearMagnetPreview(){
+      mctx.clearRect(0,0,magnetPreview.width, magnetPreview.height);
+    }
+
+    function drawMagnetPreviewCircle(x0,y0,x1,y1){
+      clearMagnetPreview();
+      const r = Math.hypot(x1-x0, y1-y0);
+      mctx.strokeStyle = "rgba(255,255,255,.75)";
+      mctx.lineWidth = 2;
+      mctx.beginPath();
+      mctx.arc(x0,y0,r,0,Math.PI*2);
+      mctx.stroke();
+
+      mctx.fillStyle = "rgba(255,255,255,.12)";
+      mctx.beginPath();
+      mctx.arc(x0,y0,r,0,Math.PI*2);
+      mctx.fill();
+    }
+
+    function drawMagnetPreviewLine(x0,y0,x1,y1){
+      clearMagnetPreview();
+      mctx.strokeStyle = "rgba(255,255,255,.75)";
+      mctx.lineWidth = 2;
+      mctx.lineCap = "round";
+      mctx.beginPath();
+      mctx.moveTo(x0,y0);
+      mctx.lineTo(x1,y1);
+      mctx.stroke();
+
+      // 端点提示（吸到线的终点）
+      mctx.fillStyle = "rgba(255,255,255,.75)";
+      mctx.beginPath();
+      mctx.arc(x1,y1,4,0,Math.PI*2);
+      mctx.fill();
+    }
 
     const showHint = (text, ms=900) => {
       hint.textContent = text;
@@ -692,6 +765,8 @@ async function initModel(){
     const btnModeMP   = document.getElementById("btnModeMP");
     const btnModeRect = document.getElementById("btnModeRect");
     const btnModeDraw = document.getElementById("btnModeDraw");
+    const btnModeMagnet = document.getElementById("btnModeMagnet");
+    const btnMagnetShape = document.getElementById("btnMagnetShape");
 
     function setCaptureMode(m){
       captureMode = m;
@@ -699,16 +774,26 @@ async function initModel(){
       btnModeRect.classList.toggle("active", m==="rect");
       btnModeDraw.classList.toggle("active", m==="draw");
       btnModeGrid?.classList.toggle("active", m==="grid");
+      btnModeMagnet?.classList.toggle("active", m==="magnet");
 
       if (m === "mp") showHint("MP：点一下物体自动抠图", 900);
       if (m === "rect") showHint("RECT：按住拖拽画框，松手截取", 900);
       if (m === "draw") showHint("DRAW：按住手写路径，松手截取", 900);
       if (m === "grid") showHint("GRID：拖拽画大框 → 设行列 → done 切成碎片", 1200);
+      if (m === "magnet") showHint("MAGNET：拖出 Circle/Line，松手吸附所有 sticker", 1200);
     }
     btnModeMP.onclick = () => setCaptureMode("mp");
     btnModeRect.onclick = () => setCaptureMode("rect");
     btnModeDraw.onclick = () => setCaptureMode("draw");
     btnModeGrid.onclick = () => setCaptureMode("grid");
+
+    btnModeMagnet.onclick = () => setCaptureMode("magnet");
+
+    btnMagnetShape.onclick = ()=>{
+      magnetShape = (magnetShape === "circle") ? "line" : "circle";
+      btnMagnetShape.textContent = (magnetShape === "circle") ? "Circle" : "Line";
+      showHint("Magnet shape: " + btnMagnetShape.textContent, 700);
+    };
 
     function deselect(){
       if (selected?.el) selected.el.classList.remove("selected");
@@ -1445,7 +1530,7 @@ function applySideExtrude(thickness=18, dx=1, dy=1, darken=0.35, isPreview=false
       if (
         e.target.closest(".topbar") ||
         e.target.closest("#editbar") ||
-        e.target.closest("#gridbar") ||   // ✅ 新增
+        e.target.closest("#gridbar") ||  
         e.target.closest("#libPanel")
       ) return;
 
@@ -1459,7 +1544,15 @@ function applySideExtrude(thickness=18, dx=1, dy=1, darken=0.35, isPreview=false
         showHint("exit Edit", 800);
         return;
       }
-
+      // ---- MAGNET MODE ----
+      if (captureMode === "magnet"){
+        e.preventDefault();
+        magnetDown = true;
+        magnetStart = localPointFromClient(e.clientX, e.clientY);
+        magnetEnd = { ...magnetStart };
+        clearMagnetPreview();
+        return;
+      }
       stageTap.down = true;
       stageTap.x = e.clientX;
       stageTap.y = e.clientY;
@@ -1481,6 +1574,19 @@ function applySideExtrude(thickness=18, dx=1, dy=1, darken=0.35, isPreview=false
     }, { passive:false });
 
     stage.addEventListener("pointermove", (e)=>{
+      // ---- MAGNET MODE PREVIEW ----
+      if (captureMode === "magnet" && magnetDown && magnetStart){
+        e.preventDefault();
+        const p = localPointFromClient(e.clientX, e.clientY);
+        magnetEnd = p;
+
+        if (magnetShape === "circle"){
+          drawMagnetPreviewCircle(magnetStart.x, magnetStart.y, magnetEnd.x, magnetEnd.y);
+        }else{
+          drawMagnetPreviewLine(magnetStart.x, magnetStart.y, magnetEnd.x, magnetEnd.y);
+        }
+        return;
+      }
       if (!pointerDown || !startPt) return;
       e.preventDefault();
 
@@ -1524,6 +1630,47 @@ function applySideExtrude(thickness=18, dx=1, dy=1, darken=0.35, isPreview=false
             await handleMediaPipeTap(e);
           }
         }
+        return;
+      }
+
+      // ---- MAGNET MODE APPLY ----
+      if (captureMode === "magnet"){
+        if (!magnetDown || !magnetStart || !magnetEnd) return;
+        e.preventDefault();
+        magnetDown = false;
+
+        if (magnetShape === "circle"){
+          const r = Math.max(14, Math.hypot(magnetEnd.x - magnetStart.x, magnetEnd.y - magnetStart.y));
+          attractor = {
+            type:"circle",
+            cx: magnetStart.x, cy: magnetStart.y, r,
+            strength: 720,
+            swirl: 2.2,
+            damping: 0.90,
+            ttl: 2.6,
+            t0: performance.now()
+          };
+          showHint("吸到圈里", 700);
+        }else{
+          attractor = {
+            type:"line",
+            ax: magnetStart.x, ay: magnetStart.y,
+            bx: magnetEnd.x,   by: magnetEnd.y,
+            targetT: 1, // 吸到 B 端；想吸到 A 端就设 0
+            strength: 820,
+            swirl: 2.8,
+            damping: 0.90,
+            ttl: 2.4,
+            t0: performance.now()
+          };
+          showHint("吸到线端点", 700);
+        }
+
+        clearMagnetPreview();
+        magnetStart = null;
+        magnetEnd = null;
+
+        startGravityLoop(); // ✅ 保证 gravity OFF 时也能动
         return;
       }
 
@@ -2384,6 +2531,63 @@ function gravityTick(t){
     st.vx += tiltAX * dt;
     st.vy += tiltAY * dt;
 
+    // 1.5) Attractor force（MAGNET）
+    if (attractor){
+      const now = performance.now();
+      const life = (now - attractor.t0) / 1000;
+      const alive = life <= attractor.ttl;
+
+      if (!alive){
+        attractor = null;
+      }else{
+        const cx = st.x + (st.w * st.scale)/2;
+        const cy = st.y + (st.h * st.scale)/2;
+
+        let tx=cx, ty=cy;
+
+        if (attractor.type === "circle"){
+          const dx0 = cx - attractor.cx;
+          const dy0 = cy - attractor.cy;
+          const d0  = Math.hypot(dx0,dy0) || 1;
+
+          if (d0 <= attractor.r){
+            tx = attractor.cx; ty = attractor.cy;
+          }else{
+            tx = attractor.cx + dx0/d0 * attractor.r;
+            ty = attractor.cy + dy0/d0 * attractor.r;
+          }
+        }else{
+          tx = attractor.targetT ? attractor.bx : attractor.ax;
+          ty = attractor.targetT ? attractor.by : attractor.ay;
+        }
+
+        const dx = tx - cx;
+        const dy = ty - cy;
+        const d  = Math.hypot(dx,dy) || 1;
+
+        const pull = attractor.strength * (0.35 + 0.65 * clamp(d/420, 0, 1));
+
+        const ax = (dx/d) * pull;
+        const ay = (dy/d) * pull;
+
+        const sx = (-dy/d) * pull * attractor.swirl * 0.18;
+        const sy = ( dx/d) * pull * attractor.swirl * 0.18;
+
+        st.vx += (ax + sx) * dt;
+        st.vy += (ay + sy) * dt;
+
+        st.av += clamp((sx+sy)/1200, -0.9, 0.9) * dt;
+
+        st.vx *= attractor.damping;
+        st.vy *= attractor.damping;
+
+        if (d < 10){
+          st.vx *= 0.6;
+          st.vy *= 0.6;
+        }
+      }
+    }
+
     // 2) 轻微旋转趋势（速度越大越容易转一点点）
     const sp = Math.hypot(st.vx, st.vy);
     st.av += (Math.sign(st.vx)*0.15 + (Math.random()*2-1)*jitter) * dt * clamp(sp/800, 0, 1);
@@ -2458,11 +2662,12 @@ function gravityTick(t){
     }
   }
 
-  if (gravityMode){
-    gravityRAF = requestAnimationFrame(gravityTick);
-  }else{
-    stopGravityLoop();
-  }
+    const needLoop = gravityMode || !!attractor;
+    if (needLoop){
+      gravityRAF = requestAnimationFrame(gravityTick);
+    }else{
+      stopGravityLoop();
+    }
 }
 
 async function requestOrientationPermissionIfNeeded(){
