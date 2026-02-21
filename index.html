@@ -331,6 +331,7 @@
     <button id="btnMotion" class="primary">Enable Motion</button>
 
     <button id="btnGravity" class="primary">Gravity OFF</button>
+    <button id="btnShuffleMode" class="primary">Shuffle OFF</button>
 
 
 
@@ -1974,6 +1975,21 @@ function applySideExtrude(thickness=18, dx=1, dy=1, darken=0.35, isPreview=false
 
 const btnGravity = document.getElementById("btnGravity");
 
+    const btnShuffleMode = document.getElementById("btnShuffleMode");
+
+    btnShuffleMode.addEventListener("click", async ()=>{
+      shuffleMode = !shuffleMode;
+      btnShuffleMode.textContent = shuffleMode ? "Shuffle ON" : "Shuffle OFF";
+      btnShuffleMode.classList.toggle("active", shuffleMode);
+
+      if (shuffleMode){
+        await requestMotionPermissionIfNeeded(); // 你已经写了这个函数
+        showHint("Shuffle: shake to swap", 900);
+      } else {
+        showHint("Shuffle OFF", 700);
+      }
+    });
+
 btnGravity.addEventListener("click", async ()=>{
   // 切到 ON
   if (!gravityMode){
@@ -2265,10 +2281,43 @@ function shuffleAllGrids(){
   gridGroups.forEach(g => shuffleGridGroup(g));
 }
 
+function shuffleAllStickers(swaps = 12){
+  const n = stickers.length;
+  if (n < 2) return;
+
+  // 记录当前位置
+  const pos = stickers.map(st => ({ x: st.x, y: st.y }));
+
+  // 做若干次随机“成对交换”
+  const times = Math.min(swaps, n * 2);
+  for (let t=0; t<times; t++){
+    const a = (Math.random() * n) | 0;
+    let b = (Math.random() * n) | 0;
+    if (b === a) b = (b + 1) % n;
+    [pos[a], pos[b]] = [pos[b], pos[a]];
+  }
+
+  // 过渡动画（更像洗牌）
+  stickers.forEach((st, i)=>{
+    st.x = pos[i].x;
+    st.y = pos[i].y;
+
+    st.el.style.transition = "left 180ms ease, top 180ms ease";
+    st.el.style.left = st.x + "px";
+    st.el.style.top  = st.y + "px";
+
+    clearTimeout(st._tShuffle);
+    st._tShuffle = setTimeout(()=>{ st.el.style.transition = ""; }, 220);
+  });
+
+  showHint("shuffle!", 700);
+}
+
 // =========================
 // Gravity Mode (tilt-driven) for all stickers
 // =========================
 let gravityMode = false;
+let shuffleMode = false;
 let gravityRAF = 0;
 let lastT = 0;
 
@@ -2429,14 +2478,18 @@ async function requestOrientationPermissionIfNeeded(){
 
 // iOS / Android: devicemotion
 let lastShakeAt = 0;
+let shakeInstalled = false;
 function installShake(){
+  if (shakeInstalled) return;     // ✅ 防重复
+  shakeInstalled = true;
+
   if (!("DeviceMotionEvent" in window)) return;
 
   const TH = 16;      // 阈值（可调：12~22）
   const GAP = 650;    // 防抖间隔
 
   window.addEventListener("devicemotion", (e)=>{
-    showHint("motion event!", 300);
+    //showHint("motion event!", 300);
     const now = Date.now();
     if (now - lastShakeAt < GAP) return;
 
@@ -2446,6 +2499,14 @@ function installShake(){
     const mag = Math.sqrt((a.x||0)**2 + (a.y||0)**2 + (a.z||0)**2);
     if (mag > TH){
       lastShakeAt = now;
+
+      // ✅ 1) Shuffle ON：洗全场
+      if (shuffleMode){
+        shuffleAllStickers(Math.max(8, Math.round(stickers.length * 0.6)));
+        return;
+      }
+
+      // ✅ 2) Shuffle OFF：维持原逻辑（只洗 grid）
       shuffleAllGrids();
     }
   }, { passive:true });
